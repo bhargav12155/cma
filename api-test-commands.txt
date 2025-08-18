@@ -1,0 +1,29 @@
+# Simple CMA API Test Commands
+
+## 1. Test Gemini AI Text Generation
+
+### Generate Property Description
+curl -X POST http://localhost:3001/api/generate-text ^
+  -H "Content-Type: application/json" ^
+  -d "{\"prompt\": \"Write a compelling real estate description for a 3-bedroom, 2-bathroom ranch home in Omaha, Nebraska. 1,800 sq ft, built in 2005, 2-car garage, finished basement. Keep it under 200 words.\"}"
+
+### Generate Listing Strategy
+curl -X POST http://localhost:3001/api/generate-text ^
+  -H "Content-Type: application/json" ^
+  -d "{\"prompt\": \"As a real estate agent in Omaha, provide a listing strategy for a $350,000 home in average condition. Market shows 15 days average DOM. Suggest pricing and marketing approach in 2-3 sentences.\"}"
+
+## 2. Test MLS Comparable Properties Search
+
+### Search for Omaha Comps
+curl "http://localhost:3001/api/comps?city=Omaha&sqft_min=1500&sqft_max=2000"
+
+### Search for Lincoln Comps
+curl "http://localhost:3001/api/comps?city=Lincoln&sqft_min=1800&sqft_max=2200"
+
+## 3. Health Check (Basic)
+curl http://localhost:3001/
+
+## Notes:
+- The Gemini API calls should work with your provided API key
+- The MLS API calls will attempt to connect to Paragon API (may require valid credentials)
+- Server is running on http://localhost:3001
