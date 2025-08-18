@@ -3,6 +3,7 @@
 // --- 1. Import Necessary Libraries ---
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 // In a real Node.js environment, you'd use a library like 'node-fetch' to make API calls.
 // For a real project, run: npm install node-fetch
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
@@ -14,28 +15,27 @@ const PORT = process.env.PORT || 3001;
 // --- 3. Configure Middleware ---
 app.use(cors());
 app.use(express.json());
+// Serve static files (index.html, etc.) from root directory
+app.use(express.static(__dirname));
 
-// --- 4. Securely Store Credentials (IMPORTANT) ---
-// These should be stored in environment variables (e.g., in a .env file) for security.
+// --- 4. Securely Store Credentials (UPDATED to use environment variables) ---
 const paragonApiConfig = {
-    clientId: '8fbF4ONttMVXbsp2WKCK',
-    clientSecret: 'dH8o7fxwLISCrMmZ14Sj2knt6EM6ewAOcvM2oZvd',
-    tokenUrl: 'https://paragonapi.com/token', // This is a standard URL, developer should confirm.
-    apiUrl: 'https://api.paragonapi.com/api/v2/OData/bk9', // UPDATED API URL
+    clientId: process.env.PARAGON_CLIENT_ID || '8fbF4ONttMVXbsp2WKCK',
+    clientSecret: process.env.PARAGON_CLIENT_SECRET || 'dH8o7fxwLISCrMmZ14Sj2knt6EM6ewAOcvM2oZvd',
+    tokenUrl: process.env.PARAGON_TOKEN_URL || 'https://paragonapi.com/token',
+    apiUrl: process.env.PARAGON_API_URL || 'https://api.paragonapi.com/api/v2/OData/bk9'
 };
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyACKfnIE47Ig4PZyzjygfV9VZxUKK0NPI0';
+const PARAGON_SERVER_TOKEN = process.env.PARAGON_SERVER_TOKEN || '429b18690390adfa776f0b727dfc78cc';
+const PARAGON_ACCESS_TOKEN = process.env.PARAGON_ACCESS_TOKEN || '';
+const PARAGON_APP_ID = process.env.PARAGON_APP_ID || 'ebd3728e-b55f-4973-8652-b72bd548ab3d';
 
 // --- 5. Define API Endpoints ---
 
-// Health check/status endpoint
+// Health check/status endpoint (root now serves UI)
 app.get('/', (req, res) => {
-    res.json({
-        message: 'Simple CMA API is running',
-        status: 'healthy',
-        timestamp: new Date().toISOString(),
-        version: '1.0.0'
-    });
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // API health check
@@ -81,79 +81,93 @@ app.get('/api/status', (req, res) => {
     });
 });
 
+// Utility: central error logger (respect DEBUG env)
+function logDebug(...args) { if (process.env.DEBUG === 'true') console.log('[DEBUG]', ...args); }
+function logError(stage, err, extra) { console.error(`[PARAGON ERROR][${stage}]`, err?.message || err, extra || ''); }
+
+// Simplified token helper
+function getParagonToken() {
+    const token = PARAGON_ACCESS_TOKEN || (PARAGON_SERVER_TOKEN && PARAGON_SERVER_TOKEN !== 'YOUR_SERVER_TOKEN' ? PARAGON_SERVER_TOKEN : null);
+    return token;
+}
+
 // Endpoint for fetching comparable properties from the Paragon Web API
 app.get('/api/comps', async (req, res) => {
-    console.log('Received request for comps with query:', req.query);
-    
-    // --- START: REAL WEB API CONNECTION LOGIC ---
+    const { city, sqft_min, sqft_max } = req.query;
+    if (!city) return res.status(400).json({ message: 'Missing required parameter: city' });
+    const sqftMin = Number.isFinite(Number(sqft_min)) ? Number(sqft_min) : 0;
+    const sqftMax = Number.isFinite(Number(sqft_max)) ? Number(sqft_max) : (sqftMin + 1000);
+    const safeCity = String(city).replace(/'/g, "''");
+
+    const token = getParagonToken();
+    if (!token) {
+        return res.status(500).json({ message: 'No Paragon access token configured. Set PARAGON_ACCESS_TOKEN or PARAGON_SERVER_TOKEN.' });
+    }
+
     try {
-        // 1. Get an Access Token from the Paragon API
-        const tokenResponse = await fetch(paragonApiConfig.tokenUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: new URLSearchParams({
-                'grant_type': 'client_credentials',
-                'client_id': paragonApiConfig.clientId,
-                'client_secret': paragonApiConfig.clientSecret,
-            })
-        });
+        const filterParts = [
+            "StandardStatus eq 'Sold'",
+            `City eq '${safeCity}'`,
+            `LivingArea ge ${sqftMin}`,
+            `LivingArea le ${sqftMax}`
+        ];
+        const odataFilter = `$filter=${filterParts.join(' and ')}`;
+        const searchUrl = `${paragonApiConfig.apiUrl}/Property?${odataFilter}&$top=50`;
+        logDebug('Comps search URL', searchUrl);
 
-        if (!tokenResponse.ok) {
-            throw new Error('Failed to authenticate with MLS API.');
+        let propertyResponse;
+        try {
+            propertyResponse = await fetch(searchUrl, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Accept': 'application/json'
+                }
+            });
+        } catch (e) {
+            logError('property_network', e);
+            return res.status(502).json({ message: 'Cannot reach property endpoint' });
         }
-
-        const tokenData = await tokenResponse.json();
-        const accessToken = tokenData.access_token;
-        console.log('Successfully obtained API access token.');
-
-        // 2. Use the Access Token to search for properties
-        const { city, sqft_min, sqft_max } = req.query;
-        // The API query will use OData filter syntax, which is standard for modern real estate APIs.
-        const odataFilter = `$filter=StandardStatus eq 'Sold' and City eq '${city}' and LivingArea ge ${sqft_min} and LivingArea le ${sqft_max}`;
-        const searchUrl = `${paragonApiConfig.apiUrl}/Property?${odataFilter}&$top=50`; // Appended resource, e.g., /Property
-
-        const propertyResponse = await fetch(searchUrl, {
-            headers: {
-                'Authorization': `Bearer ${accessToken}`,
-            }
-        });
 
         if (!propertyResponse.ok) {
-            throw new Error('Failed to fetch property data from MLS API.');
+            const body = await propertyResponse.text();
+            logError('property_http', new Error('Property request failed'), { status: propertyResponse.status, body });
+            return res.status(propertyResponse.status).json({ message: 'Property fetch failed', body });
         }
-        
-        const propertyData = await propertyResponse.json();
-        const listings = propertyData.value; // Results are often in a 'value' array
-        console.log(`Found ${listings.length} comps from Paragon API feed.`);
 
-        // 3. Format the results into a clean JSON array that the frontend expects
+        let propertyData;
+        try { propertyData = await propertyResponse.json(); } catch (e) {
+            logError('property_parse', e);
+            return res.status(502).json({ message: 'Bad JSON from property endpoint' });
+        }
+
+        const listings = Array.isArray(propertyData.value) ? propertyData.value : [];
+        logDebug('Comps listings count', listings.length);
+        if (!listings.length) {
+            return res.json({ items: [], meta: { city: safeCity, sqftMin, sqftMax, note: 'No listings returned. Verify dataset, token, or use platform listings endpoint instead of OData.' } });
+        }
+
         const formattedComps = listings.map(record => ({
-            id: record.ListingKey,
-            address: record.UnparsedAddress,
-            city: record.City,
-            status: 'Sold',
-            soldDate: record.CloseDate,
-            soldPrice: record.ClosePrice,
-            sqft: record.LivingArea,
-            beds: record.BedroomsTotal,
-            baths: record.BathroomsTotal,
-            garage: record.GarageSpaces,
-            yearBuilt: record.YearBuilt,
-            condition: 'Average', 
-            imageUrl: record.Photos && record.Photos.length > 0 ? record.Photos[0].url : `https://placehold.co/600x400/d1d5db/374151?text=No+Image`,
-            dom: record.DaysOnMarket,
+            id: record.ListingKey || record.Id,
+            address: record.UnparsedAddress || record.FullStreetAddress || 'Unknown',
+            city: record.City || safeCity,
+            status: record.StandardStatus || 'Sold',
+            soldDate: record.CloseDate || record.ClosingDate || null,
+            soldPrice: record.ClosePrice || record.SoldPrice || 0,
+            sqft: record.LivingArea || 0,
+            beds: record.BedroomsTotal || 0,
+            baths: record.BathroomsTotal || 0,
+            garage: record.GarageSpaces || 0,
+            yearBuilt: record.YearBuilt || null,
+            basementSqft: record.BasementFinishedArea || 0,
+            condition: 'Average',
+            imageUrl: (record.Photos && record.Photos.length > 0 && (record.Photos[0].url || record.Photos[0].Url)) ? (record.Photos[0].url || record.Photos[0].Url) : 'https://placehold.co/600x400/d1d5db/374151?text=No+Image',
+            dom: record.DaysOnMarket || 0,
         }));
-
-        // 4. Send the formatted data back to the React app
-        res.json(formattedComps);
-
-    } catch (error) {
-        console.error('Paragon API Error:', error);
-        res.status(500).json({ message: 'Failed to fetch data from MLS.' });
+        return res.json({ items: formattedComps, count: formattedComps.length });
+    } catch (err) {
+        logError('comps_unhandled', err);
+        return res.status(500).json({ message: 'Unhandled error', error: err.message });
     }
-    // --- END: REAL WEB API CONNECTION LOGIC ---
 });
 
 
@@ -190,6 +204,54 @@ app.post('/api/generate-text', async (req, res) => {
     }
 });
 
+// OAuth callback placeholder route
+app.get('/oauth/callback', (req, res) => {
+    const { code, state, error, error_description } = req.query;
+    if (error) {
+        console.error('[OAUTH CALLBACK ERROR]', error, error_description || '');
+        return res.status(400).send(`<h1>OAuth Error</h1><p>${error}: ${error_description || ''}</p>`);
+    }
+    console.log('[OAUTH CALLBACK] Received code:', code, 'state:', state);
+    // TODO: Exchange code for access token if using authorization_code flow
+    res.send(`<h1>OAuth Callback Received</h1><p>Code: ${code || 'N/A'}</p><p>State: ${state || 'N/A'}</p>`);
+});
+
+// Endpoint to fetch any data (Agents) to verify connectivity
+app.get('/api/agents', async (req, res) => {
+    try {
+        const token = PARAGON_ACCESS_TOKEN || (PARAGON_SERVER_TOKEN && PARAGON_SERVER_TOKEN !== 'YOUR_SERVER_TOKEN' ? PARAGON_SERVER_TOKEN : null);
+        if (!token) {
+            return res.status(500).json({ message: 'No Paragon access token configured. Set PARAGON_ACCESS_TOKEN or PARAGON_SERVER_TOKEN.' });
+        }
+        const limit = Number(req.query.limit) || 10;
+        const offset = Number(req.query.offset) || 0;
+        const url = `https://paragonapi.com/platform/mls/bk9/agents?limit=${limit}&offset=${offset}&appID=${encodeURIComponent(PARAGON_APP_ID)}&sortBy=APIModificationTimestamp`;
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/json'
+            }
+        });
+        if (!response.ok) {
+            const text = await response.text();
+            return res.status(response.status).json({ message: 'Agents fetch failed', body: text });
+        }
+        const data = await response.json();
+        // Return raw or mapped subset
+        const agents = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : data.results || data.value || data);
+        const simplified = (agents || []).slice(0, limit).map(a => ({
+            id: a.Id || a.id || a.AgentID || a.MemberKey || null,
+            name: a.FullName || a.Name || `${a.FirstName || ''} ${a.LastName || ''}`.trim(),
+            office: a.OfficeName || a.Office || null,
+            email: a.Email || a.email || null,
+            phone: a.Phone || a.PrimaryPhone || null
+        }));
+        res.json({ count: simplified.length, items: simplified });
+    } catch (err) {
+        logError('agents_unhandled', err);
+        res.status(500).json({ message: 'Unhandled error fetching agents', error: err.message });
+    }
+});
 
 // --- 6. Start the Server ---
 app.listen(PORT, () => {
