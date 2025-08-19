@@ -1,259 +1,472 @@
 // server.js
 
-// --- 1. Import Necessary Libraries ---
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
-// In a real Node.js environment, you'd use a library like 'node-fetch' to make API calls.
-// For a real project, run: npm install node-fetch
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+// --- 1. Import Libraries ---
+const express = require("express");
+const cors = require("cors");
+const path = require("path");
+const fetch = (...args) =>
+  import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
-// --- 2. Initialize the Express App ---
+// --- 2. Init App ---
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// --- 3. Configure Middleware ---
+// --- 3. Middleware ---
 app.use(cors());
 app.use(express.json());
-// Serve static files (index.html, etc.) from root directory
-app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname)));
 
-// --- 4. Securely Store Credentials (UPDATED to use environment variables) ---
+// --- 4. Config ---
+// --- 4. Paragon API Configuration ---
+// Based on Paragon API documentation
 const paragonApiConfig = {
-    clientId: process.env.PARAGON_CLIENT_ID || '8fbF4ONttMVXbsp2WKCK',
-    clientSecret: process.env.PARAGON_CLIENT_SECRET || 'dH8o7fxwLISCrMmZ14Sj2knt6EM6ewAOcvM2oZvd',
-    tokenUrl: process.env.PARAGON_TOKEN_URL || 'https://paragonapi.com/token',
-    apiUrl: process.env.PARAGON_API_URL || 'https://api.paragonapi.com/api/v2/OData/bk9'
+  serverToken: "429b18690390adfa776f0b727dfc78cc", // Your actual Server Token
+  datasetId: "bk9", // Your dataset ID
+  apiUrl: "https://api.paragonapi.com/api/v2/OData",
 };
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyACKfnIE47Ig4PZyzjygfV9VZxUKK0NPI0';
-const PARAGON_SERVER_TOKEN = process.env.PARAGON_SERVER_TOKEN || '429b18690390adfa776f0b727dfc78cc';
-const PARAGON_ACCESS_TOKEN = process.env.PARAGON_ACCESS_TOKEN || '';
-const PARAGON_APP_ID = process.env.PARAGON_APP_ID || 'ebd3728e-b55f-4973-8652-b72bd548ab3d';
+const GEMINI_API_KEY = "AIzaSyACKfnIE47Ig4PZyzjygfV9VZxUKK0NPI0";
 
-// --- 5. Define API Endpoints ---
+// --- 5. Endpoints ---
 
-// Health check/status endpoint (root now serves UI)
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+// Root health
+app.get("/", (req, res) => {
+  res.json({
+    message: "Simple CMA API is running",
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+  });
 });
 
-// API health check
-app.get('/api/health', (req, res) => {
-    res.json({
-        status: 'healthy',
-        uptime: process.uptime(),
-        timestamp: new Date().toISOString(),
-        services: {
-            gemini_ai: GEMINI_API_KEY ? 'configured' : 'not_configured',
-            mls_api: paragonApiConfig.clientId ? 'configured' : 'not_configured'
-        }
+// Health check
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "healthy",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    services: {
+      gemini_ai: GEMINI_API_KEY ? "configured" : "not_configured",
+      paragon_api:
+        paragonApiConfig.serverToken !== "YOUR_SERVER_TOKEN_HERE"
+          ? "configured"
+          : "not_configured",
+    },
+  });
+});
+
+// Server status
+app.get("/api/status", (req, res) => {
+  res.json({
+    server: "Simple CMA Backend",
+    version: "1.0.0",
+    environment: process.env.NODE_ENV || "development",
+    port: PORT,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    memory: process.memoryUsage(),
+  });
+});
+
+// Test endpoint to check Paragon API configuration
+app.get("/api/test-config", (req, res) => {
+  res.json({
+    message: "Paragon API Configuration Check",
+    tokenConfigured: paragonApiConfig.serverToken !== "YOUR_SERVER_TOKEN_HERE",
+    datasetId: paragonApiConfig.datasetId,
+    apiUrl: paragonApiConfig.apiUrl,
+    tokenPrefix: paragonApiConfig.serverToken.substring(0, 10) + "...",
+  });
+});
+
+// NOTE: You need to replace 'YOUR_SERVER_TOKEN_HERE' in the paragonApiConfig
+// with your actual Server Token from your Paragon dashboard
+
+// Comps endpoint
+app.get("/api/comps", async (req, res) => {
+  console.log("Received request for comps with query:", req.query);
+
+  // Check if server token is configured
+  if (paragonApiConfig.serverToken === "YOUR_SERVER_TOKEN_HERE") {
+    console.error("Server token not configured!");
+    return res.status(500).json({
+      message: "Server configuration error",
+      details:
+        "Paragon Server Token not configured. Please update paragonApiConfig.serverToken with your actual token from the Paragon dashboard.",
     });
-});
+  }
 
-// Server status information
-app.get('/api/status', (req, res) => {
-    res.json({
-        server: 'Simple CMA Backend',
-        version: '1.0.0',
-        environment: process.env.NODE_ENV || 'development',
-        port: PORT,
-        uptime: process.uptime(),
-        timestamp: new Date().toISOString(),
-        memory: process.memoryUsage(),
-        endpoints: [
-            'GET /',
-            'GET /api/health',
-            'GET /api/status',
-            'GET /api/comps',
-            'POST /api/generate-text'
-        ],
-        services: {
-            gemini_ai: {
-                status: GEMINI_API_KEY ? 'configured' : 'not_configured',
-                model: 'gemini-2.5-flash-preview-05-20'
-            },
-            mls_api: {
-                status: paragonApiConfig.clientId ? 'configured' : 'not_configured',
-                provider: 'Paragon API'
-            }
-        }
-    });
-});
-
-// Utility: central error logger (respect DEBUG env)
-function logDebug(...args) { if (process.env.DEBUG === 'true') console.log('[DEBUG]', ...args); }
-function logError(stage, err, extra) { console.error(`[PARAGON ERROR][${stage}]`, err?.message || err, extra || ''); }
-
-// Simplified token helper
-function getParagonToken() {
-    const token = PARAGON_ACCESS_TOKEN || (PARAGON_SERVER_TOKEN && PARAGON_SERVER_TOKEN !== 'YOUR_SERVER_TOKEN' ? PARAGON_SERVER_TOKEN : null);
-    return token;
-}
-
-// Endpoint for fetching comparable properties from the Paragon Web API
-app.get('/api/comps', async (req, res) => {
+  try {
+    // Build property query using Paragon API format
     const { city, sqft_min, sqft_max } = req.query;
-    if (!city) return res.status(400).json({ message: 'Missing required parameter: city' });
-    const sqftMin = Number.isFinite(Number(sqft_min)) ? Number(sqft_min) : 0;
-    const sqftMax = Number.isFinite(Number(sqft_max)) ? Number(sqft_max) : (sqftMin + 1000);
-    const safeCity = String(city).replace(/'/g, "''");
 
-    const token = getParagonToken();
-    if (!token) {
-        return res.status(500).json({ message: 'No Paragon access token configured. Set PARAGON_ACCESS_TOKEN or PARAGON_SERVER_TOKEN.' });
+    // OData filter syntax as per Paragon docs
+    const odataFilter = `$filter=StandardStatus eq 'Closed' and City eq '${city}' and LivingArea ge ${sqft_min} and LivingArea le ${sqft_max}`;
+    const searchUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Property?${odataFilter}&$top=50`;
+
+    console.log("Making request to:", searchUrl);
+    console.log(
+      "Using token:",
+      paragonApiConfig.serverToken.substring(0, 10) + "..."
+    );
+
+    // Fetch properties using Server Token authentication
+    const propertyResponse = await fetch(searchUrl, {
+      headers: {
+        Authorization: `Bearer ${paragonApiConfig.serverToken}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    console.log("Property response status:", propertyResponse.status);
+
+    if (!propertyResponse.ok) {
+      console.error(
+        "Property fetch error response:",
+        await propertyResponse.text()
+      );
+      throw new Error(`Data fetch failed (${propertyResponse.status})`);
     }
 
-    try {
-        const filterParts = [
-            "StandardStatus eq 'Sold'",
-            `City eq '${safeCity}'`,
-            `LivingArea ge ${sqftMin}`,
-            `LivingArea le ${sqftMax}`
-        ];
-        const odataFilter = `$filter=${filterParts.join(' and ')}`;
-        const searchUrl = `${paragonApiConfig.apiUrl}/Property?${odataFilter}&$top=50`;
-        logDebug('Comps search URL', searchUrl);
+    const propertyData = await propertyResponse.json();
+    const listings = propertyData.value || [];
+    console.log(`Found ${listings.length} comps from Paragon API.`);
 
-        let propertyResponse;
-        try {
-            propertyResponse = await fetch(searchUrl, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Accept': 'application/json'
-                }
-            });
-        } catch (e) {
-            logError('property_network', e);
-            return res.status(502).json({ message: 'Cannot reach property endpoint' });
-        }
+    // Format the results for the frontend with comprehensive field mapping
+    const formattedComps = listings.map((record) => ({
+      id: record.ListingKey || record.PropertyId || record.id,
+      address:
+        record.UnparsedAddress ||
+        record.Address ||
+        `${record.StreetNumber} ${record.StreetName}`,
+      city: record.City,
+      status:
+        record.StandardStatus === "Closed" ? "Sold" : record.StandardStatus,
+      soldDate: record.CloseDate || record.ContractStatusChangeDate,
+      soldPrice: Number(record.ClosePrice || record.ListPrice || 0),
+      listPrice: Number(record.ListPrice || 0),
+      sqft: Number(record.LivingArea || record.AboveGradeFinishedArea || 0),
+      aboveGradeSqft: Number(record.AboveGradeFinishedArea || 0),
+      belowGradeSqft: Number(record.BelowGradeFinishedArea || 0),
+      beds: Number(record.BedroomsTotal || 0),
+      baths: Number(record.BathroomsTotalDecimal || record.BathroomsTotal || 0),
+      bathsFull: Number(record.BathroomsFull || 0),
+      bathsHalf: Number(record.BathroomsHalf || 0),
+      garage: Number(
+        record.GarageSpaces || record.ParkingTotal || record.CoveredSpaces || 0
+      ),
+      yearBuilt: Number(record.YearBuilt || 0),
+      condition:
+        record.PropertyCondition && record.PropertyCondition.length > 0
+          ? record.PropertyCondition[0]
+          : "Average",
+      propertyType: record.PropertyType || "",
+      propertySubType: record.PropertySubType || "",
+      lotSizeAcres: Number(record.LotSizeAcres || 0),
+      lotSizeSquareFeet: Number(record.LotSizeSquareFeet || 0),
+      stories: Number(record.StoriesTotal || 0),
+      heating: record.Heating || "",
+      cooling: record.Cooling || "",
+      appliances: record.Appliances || "",
+      flooring: record.Flooring || "",
+      basement: record.Basement || "",
+      fireplace: Number(record.FireplacesTotal || 0),
+      pool: record.PoolPrivateYN || false,
+      waterfront: record.WaterfrontYN || false,
+      schoolElementary: record.ElementarySchool || "",
+      schoolMiddle: record.MiddleOrJuniorSchool || "",
+      schoolHigh: record.HighSchool || "",
+      publicRemarks: record.PublicRemarks || "",
+      privateRemarks: record.PrivateRemarks || "",
+      mlsNumber: record.ListingId || "",
+      daysOnMarket: Number(
+        record.DaysOnMarket || record.CumulativeDaysOnMarket || 30
+      ),
+      dom: Number(record.DaysOnMarket || record.CumulativeDaysOnMarket || 30),
+      originalListPrice: Number(record.OriginalListPrice || 0),
+      pricePerSqft:
+        record.ClosePrice && record.LivingArea && record.LivingArea > 0
+          ? Math.round(record.ClosePrice / record.LivingArea)
+          : 0,
+      taxAssessedValue: Number(record.TaxAssessedValue || 0),
+      taxAnnualAmount: Number(record.TaxAnnualAmount || 0),
+      associationFee: Number(record.AssociationFee || 0),
+      coordinates: record.Coordinates || "",
+      latitude: Number(record.Latitude || 0),
+      longitude: Number(record.Longitude || 0),
+      imageUrl:
+        record.Media && record.Media.length > 0
+          ? record.Media[0].MediaURL
+          : record.Photos && record.Photos.length > 0
+          ? record.Photos[0].url
+          : `https://placehold.co/600x400/d1d5db/374151?text=No+Image`,
+      images: record.Media ? record.Media.map((m) => m.MediaURL) : [],
+      virtualTour:
+        record.VirtualTourURLBranded || record.VirtualTourURLUnbranded || "",
+      buildingFeatures: record.BuildingFeatures || "",
+      exteriorFeatures: record.ExteriorFeatures || "",
+      interiorFeatures: record.InteriorFeatures || "",
+      constructionMaterials: record.ConstructionMaterials || "",
+      architecturalStyle: record.ArchitecturalStyle || "",
+      newConstruction: record.NewConstructionYN || false,
+      seniorCommunity: record.SeniorCommunityYN || false,
+      gatedCommunity: record.GatedCommunityYN || false,
+      utilities: record.Utilities || "",
+      sewer: record.Sewer || "",
+      water: record.WaterSource || "",
+      electric: record.Electric || "",
+      gas: record.Gas || "",
+      inclusionsExclusions: {
+        inclusions: record.Inclusions || "",
+        exclusions: record.Exclusions || "",
+      },
+      financing: record.BuyerFinancing || "",
+      possession: record.Possession || "",
+      disclosures: record.Disclosures || "",
+      restrictions: record.Restrictions || "",
+      zoning: record.Zoning || "",
+      listAgent: {
+        name: record.ListAgentFullName || "",
+        phone: record.ListAgentPreferredPhone || "",
+        email: record.ListAgentEmail || "",
+        mlsId: record.ListAgentMlsId || "",
+      },
+      listOffice: {
+        name: record.ListOfficeName || "",
+        phone: record.ListOfficePhone || "",
+        mlsId: record.ListOfficeMlsId || "",
+      },
+      modificationTimestamp: record.ModificationTimestamp || "",
+      onMarketDate: record.OnMarketDate || "",
+      contractDate: record.PurchaseContractDate || "",
+      closeDate: record.CloseDate || "",
+      originalEntryTimestamp: record.OriginalEntryTimestamp || "",
+    }));
 
-        if (!propertyResponse.ok) {
-            const body = await propertyResponse.text();
-            logError('property_http', new Error('Property request failed'), { status: propertyResponse.status, body });
-            return res.status(propertyResponse.status).json({ message: 'Property fetch failed', body });
-        }
-
-        let propertyData;
-        try { propertyData = await propertyResponse.json(); } catch (e) {
-            logError('property_parse', e);
-            return res.status(502).json({ message: 'Bad JSON from property endpoint' });
-        }
-
-        const listings = Array.isArray(propertyData.value) ? propertyData.value : [];
-        logDebug('Comps listings count', listings.length);
-        if (!listings.length) {
-            return res.json({ items: [], meta: { city: safeCity, sqftMin, sqftMax, note: 'No listings returned. Verify dataset, token, or use platform listings endpoint instead of OData.' } });
-        }
-
-        const formattedComps = listings.map(record => ({
-            id: record.ListingKey || record.Id,
-            address: record.UnparsedAddress || record.FullStreetAddress || 'Unknown',
-            city: record.City || safeCity,
-            status: record.StandardStatus || 'Sold',
-            soldDate: record.CloseDate || record.ClosingDate || null,
-            soldPrice: record.ClosePrice || record.SoldPrice || 0,
-            sqft: record.LivingArea || 0,
-            beds: record.BedroomsTotal || 0,
-            baths: record.BathroomsTotal || 0,
-            garage: record.GarageSpaces || 0,
-            yearBuilt: record.YearBuilt || null,
-            basementSqft: record.BasementFinishedArea || 0,
-            condition: 'Average',
-            imageUrl: (record.Photos && record.Photos.length > 0 && (record.Photos[0].url || record.Photos[0].Url)) ? (record.Photos[0].url || record.Photos[0].Url) : 'https://placehold.co/600x400/d1d5db/374151?text=No+Image',
-            dom: record.DaysOnMarket || 0,
-        }));
-        return res.json({ items: formattedComps, count: formattedComps.length });
-    } catch (err) {
-        logError('comps_unhandled', err);
-        return res.status(500).json({ message: 'Unhandled error', error: err.message });
-    }
+    res.json(formattedComps);
+  } catch (error) {
+    console.error("Paragon API Error:", error);
+    res.status(500).json({
+      message: "Failed to fetch data from MLS.",
+      details: error.message,
+    });
+  }
 });
 
+// Property search endpoint - search for a specific property by address
+app.get("/api/property-search", async (req, res) => {
+  console.log("Received request for property search with query:", req.query);
 
-// Endpoint for Gemini API Calls
-app.post('/api/generate-text', async (req, res) => {
-    const { prompt } = req.body;
-    if (!prompt) {
-        return res.status(400).json({ message: 'Prompt is required.' });
-    }
-    if (!GEMINI_API_KEY || GEMINI_API_KEY === 'YOUR_GEMINI_API_KEY') {
-         return res.status(500).json({ message: 'Gemini API key is not configured on the server.' });
+  // Check if server token is configured
+  if (paragonApiConfig.serverToken === "YOUR_SERVER_TOKEN_HERE") {
+    console.error("Server token not configured!");
+    return res.status(500).json({
+      message: "Server configuration error",
+      details: "Paragon Server Token not configured.",
+    });
+  }
+
+  try {
+    const { address } = req.query;
+
+    if (!address) {
+      return res.status(400).json({
+        message: "Address parameter is required",
+      });
     }
 
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
-    const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+    // Use tolower to work around API case-sensitivity as per Paragon docs
+    const odataFilter = `$filter=tolower(UnparsedAddress) eq '${address.toLowerCase()}'`;
+    const searchUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Property?${odataFilter}&$top=10`;
 
-    try {
-        const response = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        if (!response.ok) {
-            const errorBody = await response.json();
-            console.error('Gemini API Error:', errorBody);
-            return res.status(response.status).json({ message: 'Error from Gemini API.', details: errorBody });
-        }
-        const result = await response.json();
-        const generatedText = result?.candidates?.[0]?.content?.parts?.[0]?.text || "No content generated.";
-        res.json({ text: generatedText });
-    } catch (error) {
-        console.error('Server Error calling Gemini API:', error);
-        res.status(500).json({ message: 'Internal server error.' });
+    console.log("Making property search request to:", searchUrl);
+
+    // Fetch property using Server Token authentication
+    const propertyResponse = await fetch(searchUrl, {
+      headers: {
+        Authorization: `Bearer ${paragonApiConfig.serverToken}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    console.log("Property search response status:", propertyResponse.status);
+
+    if (!propertyResponse.ok) {
+      console.error(
+        "Property search error response:",
+        await propertyResponse.text()
+      );
+      throw new Error(`Property search failed (${propertyResponse.status})`);
     }
+
+    const propertyData = await propertyResponse.json();
+    const properties = propertyData.value || [];
+    console.log(`Found ${properties.length} properties matching address.`);
+
+    if (properties.length === 0) {
+      return res.json({
+        found: false,
+        message: "No property found with that address",
+        suggestions:
+          "Try searching with a partial address or check the spelling",
+      });
+    }
+
+    // Format the first matching property with comprehensive details
+    const property = properties[0];
+    const formattedProperty = {
+      found: true,
+      id: property.ListingKey || property.PropertyId,
+      address: property.UnparsedAddress || property.Address,
+      city: property.City,
+      state: property.StateOrProvince,
+      postalCode: property.PostalCode,
+      status: property.StandardStatus,
+
+      // Property details
+      sqft: Number(property.LivingArea || property.AboveGradeFinishedArea || 0),
+      aboveGradeSqft: Number(property.AboveGradeFinishedArea || 0),
+      belowGradeSqft: Number(property.BelowGradeFinishedArea || 0),
+      beds: Number(property.BedroomsTotal || 0),
+      baths: Number(
+        property.BathroomsTotalDecimal || property.BathroomsTotal || 0
+      ),
+      bathsFull: Number(property.BathroomsFull || 0),
+      bathsHalf: Number(property.BathroomsHalf || 0),
+      garage: Number(
+        property.GarageSpaces ||
+          property.ParkingTotal ||
+          property.CoveredSpaces ||
+          0
+      ),
+      yearBuilt: Number(property.YearBuilt || 0),
+
+      // Financial data
+      listPrice: Number(property.ListPrice || 0),
+      originalListPrice: Number(property.OriginalListPrice || 0),
+      soldPrice: Number(property.ClosePrice || 0),
+      pricePerSqft:
+        property.ListPrice && property.LivingArea && property.LivingArea > 0
+          ? Math.round(property.ListPrice / property.LivingArea)
+          : 0,
+      taxAssessedValue: Number(property.TaxAssessedValue || 0),
+      taxAnnualAmount: Number(property.TaxAnnualAmount || 0),
+
+      // Property characteristics
+      propertyType: property.PropertyType || "",
+      propertySubType: property.PropertySubType || "",
+      lotSizeAcres: Number(property.LotSizeAcres || 0),
+      lotSizeSquareFeet: Number(property.LotSizeSquareFeet || 0),
+      stories: Number(property.StoriesTotal || 0),
+      condition:
+        property.PropertyCondition && property.PropertyCondition.length > 0
+          ? property.PropertyCondition[0]
+          : "",
+
+      // Systems and features
+      heating: property.Heating || "",
+      cooling: property.Cooling || "",
+      appliances: property.Appliances || "",
+      flooring: property.Flooring || "",
+      basement: property.Basement || "",
+      fireplace: Number(property.FireplacesTotal || 0),
+      pool: property.PoolPrivateYN || false,
+      waterfront: property.WaterfrontYN || false,
+
+      // School information
+      schoolElementary: property.ElementarySchool || "",
+      schoolMiddle: property.MiddleOrJuniorSchool || "",
+      schoolHigh: property.HighSchool || "",
+
+      // Listing details
+      mlsNumber: property.ListingId || "",
+      daysOnMarket: Number(
+        property.DaysOnMarket || property.CumulativeDaysOnMarket || 0
+      ),
+      onMarketDate: property.OnMarketDate || "",
+      listAgent: {
+        name: property.ListAgentFullName || "",
+        phone: property.ListAgentPreferredPhone || "",
+        email: property.ListAgentEmail || "",
+        mlsId: property.ListAgentMlsId || "",
+      },
+
+      // Media
+      imageUrl:
+        property.Media && property.Media.length > 0
+          ? property.Media[0].MediaURL
+          : property.Photos && property.Photos.length > 0
+          ? property.Photos[0].url
+          : "",
+      images: property.Media ? property.Media.map((m) => m.MediaURL) : [],
+      virtualTour:
+        property.VirtualTourURLBranded ||
+        property.VirtualTourURLUnbranded ||
+        "",
+
+      // Location
+      coordinates: property.Coordinates || "",
+      latitude: Number(property.Latitude || 0),
+      longitude: Number(property.Longitude || 0),
+
+      // Additional details
+      publicRemarks: property.PublicRemarks || "",
+      buildingFeatures: property.BuildingFeatures || "",
+      exteriorFeatures: property.ExteriorFeatures || "",
+      interiorFeatures: property.InteriorFeatures || "",
+      architecturalStyle: property.ArchitecturalStyle || "",
+      utilities: property.Utilities || "",
+
+      // Raw data for debugging
+      rawData: property,
+    };
+
+    res.json(formattedProperty);
+  } catch (error) {
+    console.error("Property search error:", error);
+    res.status(500).json({
+      message: "Failed to search for property.",
+      details: error.message,
+    });
+  }
 });
 
-// OAuth callback placeholder route
-app.get('/oauth/callback', (req, res) => {
-    const { code, state, error, error_description } = req.query;
-    if (error) {
-        console.error('[OAUTH CALLBACK ERROR]', error, error_description || '');
-        return res.status(400).send(`<h1>OAuth Error</h1><p>${error}: ${error_description || ''}</p>`);
+// Gemini endpoint
+app.post("/api/generate-text", async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt) return res.status(400).json({ message: "Prompt is required." });
+  if (!GEMINI_API_KEY)
+    return res.status(500).json({ message: "Gemini API key not configured." });
+
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
+  const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+
+  try {
+    const response = await fetch(geminiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const err = await response.json();
+      return res
+        .status(response.status)
+        .json({ message: "Error from Gemini API.", details: err });
     }
-    console.log('[OAUTH CALLBACK] Received code:', code, 'state:', state);
-    // TODO: Exchange code for access token if using authorization_code flow
-    res.send(`<h1>OAuth Callback Received</h1><p>Code: ${code || 'N/A'}</p><p>State: ${state || 'N/A'}</p>`);
+    const result = await response.json();
+    const generatedText =
+      result?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "No content generated.";
+    res.json({ text: generatedText });
+  } catch (err) {
+    console.error("Gemini API Error:", err);
+    res.status(500).json({ message: "Internal server error." });
+  }
 });
 
-// Endpoint to fetch any data (Agents) to verify connectivity
-app.get('/api/agents', async (req, res) => {
-    try {
-        const token = PARAGON_ACCESS_TOKEN || (PARAGON_SERVER_TOKEN && PARAGON_SERVER_TOKEN !== 'YOUR_SERVER_TOKEN' ? PARAGON_SERVER_TOKEN : null);
-        if (!token) {
-            return res.status(500).json({ message: 'No Paragon access token configured. Set PARAGON_ACCESS_TOKEN or PARAGON_SERVER_TOKEN.' });
-        }
-        const limit = Number(req.query.limit) || 10;
-        const offset = Number(req.query.offset) || 0;
-        const url = `https://paragonapi.com/platform/mls/bk9/agents?limit=${limit}&offset=${offset}&appID=${encodeURIComponent(PARAGON_APP_ID)}&sortBy=APIModificationTimestamp`;
-        const response = await fetch(url, {
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Accept': 'application/json'
-            }
-        });
-        if (!response.ok) {
-            const text = await response.text();
-            return res.status(response.status).json({ message: 'Agents fetch failed', body: text });
-        }
-        const data = await response.json();
-        // Return raw or mapped subset
-        const agents = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : data.results || data.value || data);
-        const simplified = (agents || []).slice(0, limit).map(a => ({
-            id: a.Id || a.id || a.AgentID || a.MemberKey || null,
-            name: a.FullName || a.Name || `${a.FirstName || ''} ${a.LastName || ''}`.trim(),
-            office: a.OfficeName || a.Office || null,
-            email: a.Email || a.email || null,
-            phone: a.Phone || a.PrimaryPhone || null
-        }));
-        res.json({ count: simplified.length, items: simplified });
-    } catch (err) {
-        logError('agents_unhandled', err);
-        res.status(500).json({ message: 'Unhandled error fetching agents', error: err.message });
-    }
-});
-
-// --- 6. Start the Server ---
-app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
-});
+// --- 6. Start ---
+app.listen(PORT, () =>
+  console.log(`Server running at http://localhost:${PORT}`)
+);

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,22 +13,81 @@
     <!-- Babel to transpile JSX in the browser -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <!-- Google Maps Places API -->
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyABw7DX0sg8fmhPt9H6JdlIGO-GikNgWhI&libraries=places" async defer></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyABw7DX0sg8fmhPt9H6JdlIGO-GikNgWhI&libraries=places"
+        async defer></script>
     <style>
         /* Custom styles for printing and animations */
         @media print {
-            body * { visibility: hidden; }
-            #print-area, #print-area * { visibility: visible; }
-            #print-area { position: absolute; left: 0; top: 0; width: 100%; }
-            .print-hidden { display: none; }
+            body * {
+                visibility: hidden;
+            }
+
+            #print-area,
+            #print-area * {
+                visibility: visible;
+            }
+
+            #print-area {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+            }
+
+            .print-hidden {
+                display: none;
+            }
         }
+
         @keyframes fade-in {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
-        .animate-fade-in { animation: fade-in 0.5s ease-out forwards; }
+
+        /* Smooth scrolling for the entire page */
+        html {
+            scroll-behavior: smooth;
+        }
+
+        /* Custom scrollbar for comparable properties grid */
+        .comps-container {
+            max-height: 70vh;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: #0ea5e9 #e2e8f0;
+        }
+
+        .comps-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .comps-container::-webkit-scrollbar-track {
+            background: #e2e8f0;
+            border-radius: 4px;
+        }
+
+        .comps-container::-webkit-scrollbar-thumb {
+            background: #0ea5e9;
+            border-radius: 4px;
+        }
+
+        .comps-container::-webkit-scrollbar-thumb:hover {
+            background: #0284c7;
+        }
+
+        .animate-fade-in {
+            animation: fade-in 0.5s ease-out forwards;
+        }
     </style>
 </head>
+
 <body class="bg-slate-50 font-sans">
     <div id="root"></div>
 
@@ -36,13 +96,19 @@
 
         // --- FETCH COMPS FROM BACKEND ---
         const fetchComps = async (city, sqft, yearBuilt) => {
-            // Use a 500 sqft and 15 year window as in the original filter
-            const sqft_min = Math.max(0, sqft - 500);
-            const sqft_max = sqft + 500;
-            // You can add yearBuilt filtering to the backend if needed
+            // Use a 500 sqft window if sqft is provided, otherwise use broader range
+            const sqft_min = sqft ? Math.max(0, sqft - 500) : 0;
+            const sqft_max = sqft ? sqft + 500 : 10000;
+            console.log('Fetching comps:', { city, sqft_min, sqft_max, yearBuilt });
             const res = await fetch(`/api/comps?city=${encodeURIComponent(city)}&sqft_min=${sqft_min}&sqft_max=${sqft_max}`);
-            if (!res.ok) return [];
-            return await res.json();
+            console.log('API response status:', res.status);
+            if (!res.ok) {
+                console.error('Failed to fetch comps:', await res.text());
+                return [];
+            }
+            const data = await res.json();
+            console.log('Fetched comps data:', data);
+            return data;
         };
 
         // --- ADJUSTMENT VALUES ---
@@ -78,54 +144,135 @@
         // --- APP STEPS ---
         const SubjectPropertyStep = ({ subjectProperty, setSubjectProperty, nextStep }) => {
             const addressInputRef = React.useRef(null);
-            React.useEffect(() => {
-                if (window.google && window.google.maps && window.google.maps.places) {
-                    const autocomplete = new window.google.maps.places.Autocomplete(addressInputRef.current, {
-                        types: ["address"],
-                        componentRestrictions: { country: "us" },
-                    });
-                    autocomplete.addListener("place_changed", () => {
-                        const place = autocomplete.getPlace();
-                        let address = place.formatted_address || "";
-                        let city = "";
-                        if (place.address_components) {
-                            for (const comp of place.address_components) {
-                                if (comp.types.includes("locality")) city = comp.long_name;
-                                if (!city && comp.types.includes("administrative_area_level_2")) city = comp.long_name;
-                            }
+            const autocompleteRef = React.useRef(null);
+            const [isSearching, setIsSearching] = useState(false);
+            const [searchMessage, setSearchMessage] = useState('');
+
+            const handlePropertySearch = async () => {
+                if (!subjectProperty.address) {
+                    setSearchMessage('Please enter an address first');
+                    return;
+                }
+
+                setIsSearching(true);
+                setSearchMessage('');
+
+                try {
+                    const response = await fetch(`/api/property-search?address=${encodeURIComponent(subjectProperty.address)}`);
+                    const data = await response.json();
+
+                    if (data.found) {
+                        // Auto-fill the form with found property details
+                        setSubjectProperty(prev => ({
+                            ...prev,
+                            city: data.city || prev.city,
+                            sqft: data.sqft || prev.sqft,
+                            basementSqft: data.belowGradeSqft || prev.basementSqft,
+                            yearBuilt: data.yearBuilt || prev.yearBuilt,
+                            beds: data.beds || prev.beds,
+                            baths: data.baths || prev.baths,
+                            garage: data.garage || prev.garage,
+                            condition: data.condition || prev.condition,
+                            propertyType: data.propertyType || prev.propertyType
+                        }));
+                        setSearchMessage(`✅ Property details found and auto-filled! MLS #: ${data.mlsNumber}`);
+                    } else {
+                        setSearchMessage('❌ Property not found in MLS. Please enter details manually.');
+                    }
+                } catch (error) {
+                    console.error('Property search error:', error);
+                    setSearchMessage('⚠️ Search failed. Please enter details manually.');
+                }
+
+                setIsSearching(false);
+            };
+
+            const handleChange = (e) => {
+                const { name, value, type } = e.target;
+                setSubjectProperty(prev => ({
+                    ...prev,
+                    [name]: type === 'number' ? (value === '' ? '' : parseFloat(value)) : value
+                }));
+                console.log('Form change:', name, value, type);
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                // Basic validation for required fields - only address and city are required
+                if (!subjectProperty.address || !subjectProperty.city) {
+                    alert('Please fill in Address and City');
+                    return;
+                }
+                console.log('Subject Property Data on Submit:', subjectProperty);
+                nextStep();
+            };
+
+            useEffect(() => {
+                console.log('SubjectPropertyStep mounted');
+
+                // Initialize Google Places Autocomplete
+                if (window.google && window.google.maps && addressInputRef.current) {
+                    autocompleteRef.current = new window.google.maps.places.Autocomplete(
+                        addressInputRef.current,
+                        {
+                            types: ['address'],
+                            componentRestrictions: { country: 'us' },
+                            fields: ['address_components', 'formatted_address', 'geometry']
                         }
-                        setSubjectProperty(prev => ({ ...prev, address, city }));
+                    );
+
+                    autocompleteRef.current.addListener('place_changed', () => {
+                        const place = autocompleteRef.current.getPlace();
+
+                        if (place.address_components) {
+                            let address = '';
+                            let city = '';
+
+                            place.address_components.forEach(component => {
+                                const types = component.types;
+                                if (types.includes('street_number')) {
+                                    address = component.long_name + ' ';
+                                }
+                                if (types.includes('route')) {
+                                    address += component.long_name;
+                                }
+                                if (types.includes('locality')) {
+                                    city = component.long_name;
+                                }
+                            });
+
+                            setSubjectProperty(prev => ({
+                                ...prev,
+                                address: address || place.formatted_address,
+                                city: city
+                            }));
+                        }
                     });
                 }
             }, []);
-            const handleChange = (e) => {
-                const { name, value, type } = e.target;
-                setSubjectProperty(prev => ({ ...prev, [name]: type === 'number' ? parseFloat(value) || 0 : value }));
-            };
-            const handleSubmit = (e) => { e.preventDefault(); nextStep(); };
 
             return (
                 <div className="animate-fade-in">
                     <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 1: Enter Subject Property Details</h2>
+                    <p className="text-gray-600 mb-6">Start by entering the property address. Use the address search to auto-fill details.</p>
                     <form onSubmit={handleSubmit} className="space-y-6 bg-white p-8 rounded-lg shadow-md">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div>
-                                <label htmlFor="address" className="block text-lg font-semibold text-gray-700 mb-2">Address</label>
+                                <label htmlFor="address" className="block text-sm font-medium text-gray-700">Property Address *</label>
                                 <input
+                                    ref={addressInputRef}
                                     type="text"
                                     name="address"
                                     id="address"
-                                    ref={addressInputRef}
                                     value={subjectProperty.address}
                                     onChange={handleChange}
                                     required
-                                    className="mt-1 block w-full rounded-lg border-2 border-sky-400 shadow focus:border-sky-600 focus:ring-2 focus:ring-sky-200 text-base px-4 py-2 bg-white placeholder-gray-400 transition-all duration-200"
-                                    placeholder="Start typing address..."
-                                    autoComplete="off"
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 sm:text-sm"
+                                    placeholder="Start typing an address..."
                                 />
                             </div>
                             <div>
-                                <label htmlFor="city" className="block text-lg font-semibold text-gray-700 mb-2">City</label>
+                                <label htmlFor="city" className="block text-sm font-medium text-gray-700">City *</label>
                                 <input
                                     type="text"
                                     name="city"
@@ -133,68 +280,46 @@
                                     value={subjectProperty.city}
                                     onChange={handleChange}
                                     required
-                                    className="mt-1 block w-full rounded-lg border-2 border-sky-400 shadow focus:border-sky-600 focus:ring-2 focus:ring-sky-200 text-base px-4 py-2 bg-white placeholder-gray-400 transition-all duration-200"
-                                    placeholder="City"
-                                    autoComplete="off"
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 sm:text-sm"
+                                    placeholder="e.g. Omaha"
                                 />
                             </div>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-8">
-                            <div>
-                                <label htmlFor="sqft" className="block text-lg font-semibold text-gray-700 mb-2">Above-Grade Sq. Ft.</label>
-                                <input type="number" name="sqft" id="sqft" value={subjectProperty.sqft} onChange={handleChange} required className="mt-1 block w-full rounded-lg border-2 border-sky-400 shadow focus:border-sky-600 focus:ring-2 focus:ring-sky-200 text-base px-4 py-2 bg-white placeholder-gray-400 transition-all duration-200" placeholder="1800" />
-                            </div>
-                            <div>
-                                <label htmlFor="basementSqft" className="block text-lg font-semibold text-gray-700 mb-2">Finished Basement Sq. Ft.</label>
-                                <input type="number" name="basementSqft" id="basementSqft" value={subjectProperty.basementSqft} onChange={handleChange} className="mt-1 block w-full rounded-lg border-2 border-sky-400 shadow focus:border-sky-600 focus:ring-2 focus:ring-sky-200 text-base px-4 py-2 bg-white placeholder-gray-400 transition-all duration-200" placeholder="800" />
-                            </div>
-                            <div>
-                                <label htmlFor="yearBuilt" className="block text-lg font-semibold text-gray-700 mb-2">Year Built</label>
-                                <input type="number" name="yearBuilt" id="yearBuilt" value={subjectProperty.yearBuilt} onChange={handleChange} required className="mt-1 block w-full rounded-lg border-2 border-sky-400 shadow focus:border-sky-600 focus:ring-2 focus:ring-sky-200 text-base px-4 py-2 bg-white placeholder-gray-400 transition-all duration-200" placeholder="2005" />
-                            </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div><label htmlFor="sqft" className="block text-sm font-medium text-gray-700">Above-Grade Sq. Ft.</label><input type="number" name="sqft" id="sqft" value={subjectProperty.sqft} onChange={handleChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 sm:text-sm" placeholder="1800" /></div>
+                            <div><label htmlFor="basementSqft" className="block text-sm font-medium text-gray-700">Finished Basement Sq. Ft.</label><input type="number" name="basementSqft" id="basementSqft" value={subjectProperty.basementSqft} onChange={handleChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 sm:text-sm" placeholder="800" /></div>
+                            <div><label htmlFor="yearBuilt" className="block text-sm font-medium text-gray-700">Year Built</label><input type="number" name="yearBuilt" id="yearBuilt" value={subjectProperty.yearBuilt} onChange={handleChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 sm:text-sm" placeholder="2005" /></div>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-8">
-                            <div>
-                                <label htmlFor="beds" className="block text-lg font-semibold text-gray-700 mb-2">Bedrooms</label>
-                                <input type="number" name="beds" id="beds" value={subjectProperty.beds} onChange={handleChange} required className="mt-1 block w-full rounded-lg border-2 border-sky-400 shadow focus:border-sky-600 focus:ring-2 focus:ring-sky-200 text-base px-4 py-2 bg-white placeholder-gray-400 transition-all duration-200" placeholder="4" />
-                            </div>
-                            <div>
-                                <label htmlFor="baths" className="block text-lg font-semibold text-gray-700 mb-2">Bathrooms</label>
-                                <input type="number" name="baths" id="baths" value={subjectProperty.baths} onChange={handleChange} required className="mt-1 block w-full rounded-lg border-2 border-sky-400 shadow focus:border-sky-600 focus:ring-2 focus:ring-sky-200 text-base px-4 py-2 bg-white placeholder-gray-400 transition-all duration-200" placeholder="3" />
-                            </div>
-                            <div>
-                                <label htmlFor="garage" className="block text-lg font-semibold text-gray-700 mb-2">Garage Stalls</label>
-                                <input type="number" name="garage" id="garage" value={subjectProperty.garage} onChange={handleChange} required className="mt-1 block w-full rounded-lg border-2 border-sky-400 shadow focus:border-sky-600 focus:ring-2 focus:ring-sky-200 text-base px-4 py-2 bg-white placeholder-gray-400 transition-all duration-200" placeholder="3" />
-                            </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div><label htmlFor="beds" className="block text-sm font-medium text-gray-700">Bedrooms</label><input type="number" name="beds" id="beds" value={subjectProperty.beds} onChange={handleChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 sm:text-sm" placeholder="4" /></div>
+                            <div><label htmlFor="baths" className="block text-sm font-medium text-gray-700">Bathrooms</label><input type="number" name="baths" id="baths" value={subjectProperty.baths} onChange={handleChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 sm:text-sm" placeholder="3" /></div>
+                            <div><label htmlFor="garage" className="block text-sm font-medium text-gray-700">Garage Stalls</label><input type="number" name="garage" id="garage" value={subjectProperty.garage} onChange={handleChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 sm:text-sm" placeholder="3" /></div>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
-                            <div>
-                                <label htmlFor="condition" className="block text-lg font-semibold text-gray-700 mb-2">Overall Condition</label>
-                                <select name="condition" id="condition" value={subjectProperty.condition} onChange={handleChange} className="mt-1 block w-full rounded-lg border-2 border-sky-400 shadow focus:border-sky-600 focus:ring-2 focus:ring-sky-200 text-base px-4 py-2 bg-white transition-all duration-200">
-                                    {Object.keys(ADJUSTMENT_VALUES.CONDITION).map(cond => <option key={cond} value={cond}>{cond}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label htmlFor="style" className="block text-lg font-semibold text-gray-700 mb-2">Style</label>
-                                <select name="style" id="style" value={subjectProperty.style} onChange={handleChange} className="mt-1 block w-full rounded-lg border-2 border-sky-400 shadow focus:border-sky-600 focus:ring-2 focus:ring-sky-200 text-base px-4 py-2 bg-white transition-all duration-200">
-                                    {HOME_STYLES.map(style => <option key={style} value={style}>{style}</option>)}
-                                </select>
-                            </div>
+                        <div><label htmlFor="condition" className="block text-sm font-medium text-gray-700">Overall Condition</label><select name="condition" id="condition" value={subjectProperty.condition} onChange={handleChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 sm:text-sm">{Object.keys(ADJUSTMENT_VALUES.CONDITION).map(cond => <option key={cond} value={cond}>{cond}</option>)}</select></div>
+                        <div>
+                            <label htmlFor="style" className="block text-sm font-medium text-gray-700">Style</label>
+                            <select name="style" id="style" value={subjectProperty.style} onChange={handleChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 sm:text-sm">
+                                {HOME_STYLES.map(style => <option key={style} value={style}>{style}</option>)}
+                            </select>
                         </div>
-                        <div className="flex justify-end mt-10">
-                            <button
-                                type="submit"
-                                className="px-6 py-2 rounded-md bg-sky-700 text-white font-semibold text-base shadow-sm hover:bg-sky-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-1 transition-all duration-150"
-                            >
-                                Find Comparables
-                            </button>
-                        </div>
+                        <div className="flex justify-end"><button type="submit" className="inline-flex justify-center rounded-md border border-transparent bg-sky-600 py-2 px-4 text-sm font-medium text-white shadow-sm hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2">Find Comparables</button></div>
                     </form>
                 </div>
             );
         };
 
         const ComparablesStep = ({ subjectProperty, selectedComps, setSelectedComps, prevStep, nextStep }) => {
+            useEffect(() => {
+                console.log('ComparablesStep mounted');
+                // Auto-scroll to this section when it mounts
+                setTimeout(() => {
+                    const element = document.getElementById('comparables-section');
+                    if (element) {
+                        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                }, 100);
+            }, []);
             const [filteredComps, setFilteredComps] = useState([]);
             const [loading, setLoading] = useState(false);
             useEffect(() => {
@@ -206,65 +331,150 @@
             const toggleComp = (comp) => setSelectedComps(prev => prev.find(c => c.id === comp.id) ? prev.filter(c => c.id !== comp.id) : [...prev, comp]);
 
             return (
-                <div className="animate-fade-in">
+                <div id="comparables-section" className="animate-fade-in">
                     <h2 className="text-2xl font-bold text-gray-800 mb-2">Step 2: Select Comparable Properties</h2>
-                    <p className="text-gray-600 mb-4">Choose 3-5 of the most relevant sold properties for the analysis.</p>
+                    <p className="text-gray-600 mb-4">Choose 3-5 of the most relevant sold properties for the analysis. <span className="text-sky-600 font-medium">Found {filteredComps.length} properties</span></p>
                     {loading ? <div className="text-center py-8">Loading comps...</div> : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {filteredComps.map(comp => {
-                            const isSelected = selectedComps.some(c => c.id === comp.id);
-                            return (
-                                <div key={comp.id} className={`bg-white rounded-lg shadow-md overflow-hidden transition-all ${isSelected ? 'ring-4 ring-sky-500' : 'ring-1 ring-gray-200'}`}>
-                                    <img src={comp.imageUrl} alt={`View of ${comp.address}`} className="w-full h-48 object-cover" />
-                                    <div className="p-4">
-                                        <p className="text-lg font-bold text-gray-800">{comp.address}</p>
-                                        <p className="text-sm text-gray-600">{comp.city}</p>
-                                        <p className="text-xl font-semibold text-green-600 mt-2">${comp.soldPrice?.toLocaleString()}</p>
-                                        <div className="text-sm text-gray-700 mt-2 space-y-1">
-                                            <p><strong>{comp.sqft?.toLocaleString()}</strong> sqft | <strong>{comp.beds}</strong> beds | <strong>{comp.baths}</strong> baths | <strong>{comp.garage}</strong> car</p>
-                                            <p>Built: <strong>{comp.yearBuilt}</strong> | Sold: <strong>{comp.soldDate}</strong></p>
+                        <div className="comps-container">
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 p-4">
+                                {filteredComps.map(comp => {
+                                    const isSelected = selectedComps.some(c => c.id === comp.id);
+                                    return (
+                                        <div key={comp.id} className={`bg-white rounded-lg shadow-md overflow-hidden transition-all ${isSelected ? 'ring-4 ring-sky-500' : 'ring-1 ring-gray-200'}`}>
+                                            <img src={comp.imageUrl} alt={`View of ${comp.address}`} className="w-full h-48 object-cover" />
+                                            <div className="p-4">
+                                                <p className="text-lg font-bold text-gray-800">{comp.address}</p>
+                                                <p className="text-sm text-gray-600">{comp.city}</p>
+                                                <p className="text-xl font-semibold text-green-600 mt-2">${comp.soldPrice?.toLocaleString()}</p>
+                                                <div className="text-sm text-gray-700 mt-2 space-y-1">
+                                                    <p><strong>{comp.sqft?.toLocaleString()}</strong> sqft | <strong>{comp.beds}</strong> beds | <strong>{comp.baths}</strong> baths | <strong>{comp.garage}</strong> car</p>
+                                                    <p>Built: <strong>{comp.yearBuilt}</strong> | Sold: <strong>{comp.soldDate}</strong></p>
+                                                </div>
+                                                <button onClick={() => toggleComp(comp)} className={`mt-4 w-full inline-flex justify-center rounded-md border border-transparent py-2 px-4 text-sm font-medium text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 ${isSelected ? 'bg-amber-500 hover:bg-amber-600 focus:ring-amber-400' : 'bg-sky-600 hover:bg-sky-700 focus:ring-sky-500'}`}>
+                                                    {isSelected ? 'Deselect' : 'Select Comp'}
+                                                </button>
+                                            </div>
                                         </div>
-                                        <button onClick={() => toggleComp(comp)} className={`mt-4 w-full inline-flex justify-center rounded-md border border-transparent py-2 px-4 text-sm font-medium text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 ${isSelected ? 'bg-amber-500 hover:bg-amber-600 focus:ring-amber-400' : 'bg-sky-600 hover:bg-sky-700 focus:ring-sky-500'}`}>
-                                            {isSelected ? 'Deselect' : 'Select Comp'}
-                                        </button>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
                     )}
                     {(!loading && filteredComps.length === 0) && (<div className="text-center py-12 bg-white rounded-lg shadow-md"><h3 className="text-xl font-semibold text-gray-700">No Matching Comps Found</h3><p className="text-gray-500 mt-2">Try adjusting the subject property details.</p></div>)}
                     <div className="flex justify-between mt-8">
                         <button onClick={prevStep} className="inline-flex justify-center rounded-md border border-gray-300 bg-white py-2 px-4 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50">Back</button>
-                        <button onClick={nextStep} disabled={selectedComps.length < 1} className="inline-flex justify-center rounded-md bg-sky-700 text-white font-semibold text-base shadow-sm hover:bg-sky-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-1 transition-all duration-150 disabled:bg-gray-400 disabled:cursor-not-allowed px-6 py-2">Generate Report</button>
+                        <button onClick={nextStep} disabled={selectedComps.length < 1} className="inline-flex justify-center rounded-md border border-transparent bg-sky-600 py-2 px-4 text-sm font-medium text-white shadow-sm hover:bg-sky-700 disabled:bg-gray-400 disabled:cursor-not-allowed">Generate Report</button>
                     </div>
                 </div>
             );
         };
 
         const ReportStep = ({ subjectProperty, selectedComps, prevStep, startOver }) => {
+            useEffect(() => {
+                console.log('ReportStep mounted');
+                console.log('Subject Property:', subjectProperty);
+                console.log('Selected Comps:', selectedComps);
+            }, []);
             const [description, setDescription] = useState('');
             const [strategy, setStrategy] = useState('');
             const [isDescLoading, setIsDescLoading] = useState(false);
             const [isStratLoading, setIsStratLoading] = useState(false);
 
-            const avgPricePerSqft = useMemo(() => selectedComps.length === 0 ? 180 : selectedComps.reduce((acc, comp) => acc + (comp.soldPrice / comp.sqft), 0) / selectedComps.length, [selectedComps]);
+            const avgPricePerSqft = useMemo(() => {
+                if (selectedComps.length === 0) return 180;
+                const validComps = selectedComps.filter(comp => comp.soldPrice && comp.sqft && comp.soldPrice > 0 && comp.sqft > 0);
+                if (validComps.length === 0) return 180;
+                return validComps.reduce((acc, comp) => acc + (comp.soldPrice / comp.sqft), 0) / validComps.length;
+            }, [selectedComps]);
+
             const adjustments = useMemo(() => selectedComps.map(comp => {
                 const adj = { id: comp.id, details: [] };
                 let totalAdjustment = 0;
-                const sqftDiff = subjectProperty.sqft - comp.sqft; if (sqftDiff !== 0) { const amount = sqftDiff * avgPricePerSqft; adj.details.push({ feature: 'GLA (Sq. Ft.)', adjustment: amount }); totalAdjustment += amount; }
-                const bathDiff = subjectProperty.baths - comp.baths; if (bathDiff !== 0) { const amount = bathDiff * ADJUSTMENT_VALUES.BATH_FULL; adj.details.push({ feature: 'Bathrooms', adjustment: amount }); totalAdjustment += amount; }
-                const bedDiff = subjectProperty.beds - comp.beds; if (bedDiff !== 0) { const amount = bedDiff * 7500; adj.details.push({ feature: 'Bedrooms', adjustment: amount }); totalAdjustment += amount; }
-                const garageDiff = subjectProperty.garage - comp.garage; if (garageDiff !== 0) { const amount = garageDiff * ADJUSTMENT_VALUES.GARAGE_STALL; adj.details.push({ feature: 'Garage Stalls', adjustment: amount }); totalAdjustment += amount; }
-                const basementDiff = subjectProperty.basementSqft - comp.basementSqft; if (basementDiff !== 0) { const amount = basementDiff * ADJUSTMENT_VALUES.BASEMENT_SQFT; adj.details.push({ feature: 'Basement Finish', adjustment: amount }); totalAdjustment += amount; }
-                const conditionDiff = ADJUSTMENT_VALUES.CONDITION[subjectProperty.condition] - (ADJUSTMENT_VALUES.CONDITION[comp.condition] || 0); if(conditionDiff !== 0) { adj.details.push({ feature: 'Condition', adjustment: conditionDiff }); totalAdjustment += conditionDiff; }
+
+                // Helper function to get numeric value
+                const getNumber = (val) => {
+                    if (val === null || val === undefined || val === '') return 0;
+                    const num = parseFloat(val);
+                    return isNaN(num) ? 0 : num;
+                };
+
+                // Get numeric values for calculations
+                const subjectSqft = getNumber(subjectProperty.sqft);
+                const compSqft = getNumber(comp.sqft);
+                const subjectBaths = getNumber(subjectProperty.baths);
+                const compBaths = getNumber(comp.baths);
+                const subjectBeds = getNumber(subjectProperty.beds);
+                const compBeds = getNumber(comp.beds);
+                const subjectGarage = getNumber(subjectProperty.garage);
+                const compGarage = getNumber(comp.garage);
+                const subjectBasement = getNumber(subjectProperty.basementSqft);
+                const compBasement = getNumber(comp.basementSqft);
+
+                // Sqft adjustment
+                const sqftDiff = subjectSqft - compSqft;
+                if (sqftDiff !== 0 && avgPricePerSqft > 0) {
+                    const amount = sqftDiff * avgPricePerSqft;
+                    adj.details.push({ feature: 'GLA (Sq. Ft.)', adjustment: amount });
+                    totalAdjustment += amount;
+                }
+
+                // Bathroom adjustment
+                const bathDiff = subjectBaths - compBaths;
+                if (bathDiff !== 0) {
+                    const amount = bathDiff * ADJUSTMENT_VALUES.BATH_FULL;
+                    adj.details.push({ feature: 'Bathrooms', adjustment: amount });
+                    totalAdjustment += amount;
+                }
+
+                // Bedroom adjustment
+                const bedDiff = subjectBeds - compBeds;
+                if (bedDiff !== 0) {
+                    const amount = bedDiff * 7500;
+                    adj.details.push({ feature: 'Bedrooms', adjustment: amount });
+                    totalAdjustment += amount;
+                }
+
+                // Garage adjustment
+                const garageDiff = subjectGarage - compGarage;
+                if (garageDiff !== 0) {
+                    const amount = garageDiff * ADJUSTMENT_VALUES.GARAGE_STALL;
+                    adj.details.push({ feature: 'Garage Stalls', adjustment: amount });
+                    totalAdjustment += amount;
+                }
+
+                // Basement adjustment
+                const basementDiff = subjectBasement - compBasement;
+                if (basementDiff !== 0) {
+                    const amount = basementDiff * ADJUSTMENT_VALUES.BASEMENT_SQFT;
+                    adj.details.push({ feature: 'Basement Finish', adjustment: amount });
+                    totalAdjustment += amount;
+                }
+
+                // Condition adjustment
+                const subjectConditionValue = ADJUSTMENT_VALUES.CONDITION[subjectProperty.condition] || 0;
+                const compConditionValue = ADJUSTMENT_VALUES.CONDITION[comp.condition] || 0;
+                const conditionDiff = subjectConditionValue - compConditionValue;
+                if (conditionDiff !== 0) {
+                    adj.details.push({ feature: 'Condition', adjustment: conditionDiff });
+                    totalAdjustment += conditionDiff;
+                }
+
                 adj.total = totalAdjustment;
-                adj.adjustedPrice = comp.soldPrice + totalAdjustment;
+                adj.adjustedPrice = getNumber(comp.soldPrice) + totalAdjustment;
                 return adj;
             }), [subjectProperty, selectedComps, avgPricePerSqft]);
-            const finalValuation = useMemo(() => adjustments.length === 0 ? 0 : adjustments.reduce((acc, adj) => acc + adj.adjustedPrice, 0) / adjustments.length, [adjustments]);
-            
-            const formatCurrency = (value) => `${value > 0 ? '+' : ''}${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)}`;
+
+            const finalValuation = useMemo(() => {
+                if (adjustments.length === 0) return 0;
+                const validAdjustments = adjustments.filter(adj => !isNaN(adj.adjustedPrice) && adj.adjustedPrice > 0);
+                if (validAdjustments.length === 0) return 0;
+                return validAdjustments.reduce((acc, adj) => acc + adj.adjustedPrice, 0) / validAdjustments.length;
+            }, [adjustments]);
+
+            const formatCurrency = (value) => {
+                if (value === null || value === undefined || isNaN(value)) return '$0';
+                return `${value > 0 ? '+' : ''}${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)}`;
+            };
             const handlePrint = () => window.print();
 
             const callGeminiAPI = async (prompt) => {
@@ -329,43 +539,117 @@
                     <div id="print-area" className="bg-white p-6 sm:p-8 rounded-lg shadow-lg">
                         <header className="border-b-2 border-gray-200 pb-4 mb-6"><div className="flex justify-between items-center"><div><h1 className="text-3xl font-bold text-sky-700">Simple CMA</h1><p className="text-gray-600">Comparative Market Analysis</p></div><div className="text-right"><p className="font-semibold">Omaha & Lincoln Real Estate</p><p className="text-sm text-gray-500">Generated: {new Date().toLocaleDateString()}</p></div></div></header>
                         <section id="summary" className="mb-8"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Valuation Summary</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><h3 className="font-semibold text-gray-700">Subject Property</h3><p className="text-lg text-gray-900">{subjectProperty.address}</p><p className="text-gray-600">{subjectProperty.city}</p></div><div className="bg-sky-50 p-4 rounded-lg text-center"><h3 className="font-semibold text-sky-800">Estimated Market Value</h3><p className="text-4xl font-bold text-sky-700 tracking-tight mt-1">{formatCurrency(finalValuation)}</p><div className="flex justify-center gap-4 mt-2 text-sm"><span>Low: {formatCurrency(finalValuation * 0.98)}</span><span>High: {formatCurrency(finalValuation * 1.02)}</span></div></div></div></section>
-                        
+
                         <section id="ai-features" className="my-8 print-hidden">
                             <h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">✨ AI-Powered Insights</h2>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
                                     <button onClick={handleGenerateDescription} disabled={isDescLoading} className="w-full inline-flex items-center justify-center rounded-md border border-transparent bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-sky-700 disabled:bg-gray-400">
-                                        {isDescLoading ? 'Generating...' : 'Generate Property Description'}
+                                        {isDescLoading ? 'Generating...' : '✨ Generate Property Description'}
                                     </button>
                                     {description && <div className="mt-4 p-4 bg-gray-50 rounded-md border text-sm text-gray-700 whitespace-pre-wrap">{description}</div>}
                                 </div>
                                 <div>
                                     <button onClick={handleGenerateStrategy} disabled={isStratLoading} className="w-full inline-flex items-center justify-center rounded-md border border-transparent bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-sky-700 disabled:bg-gray-400">
-                                        {isStratLoading ? 'Generating...' : 'Suggest Listing Strategy'}
+                                        {isStratLoading ? 'Generating...' : '✨ Suggest Listing Strategy'}
                                     </button>
                                     {strategy && <div className="mt-4 p-4 bg-gray-50 rounded-md border text-sm text-gray-700 whitespace-pre-wrap">{strategy}</div>}
                                 </div>
                             </div>
                         </section>
 
-                        <section id="comparison-chart" className="mb-8"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Side-by-Side Comparison</h2><div className="overflow-x-auto"><table className="w-full text-sm text-left text-gray-500"><thead className="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" className="py-3 px-6">Feature</th><th scope="col" className="py-3 px-6 bg-sky-50 text-sky-800">Subject Property</th>{selectedComps.map(comp => <th key={comp.id} scope="col" className="py-3 px-6">{comp.address}</th>)}</tr></thead><tbody>{[ 'status', 'soldPrice', 'sqft', 'beds', 'baths', 'garage', 'basementSqft', 'yearBuilt'].map(feature => (<tr key={feature} className="bg-white border-b"><td className="py-4 px-6 font-medium text-gray-900 whitespace-nowrap">{feature.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}</td><td className="py-4 px-6 bg-sky-50 font-semibold">{feature === 'soldPrice' ? 'N/A' : subjectProperty[feature]}</td>{selectedComps.map(comp => <td key={comp.id} className="py-4 px-6">{feature === 'soldPrice' ? `$${comp[feature].toLocaleString()}` : comp[feature]}</td>)}</tr>))}</tbody></table></div></section>
-                        <section id="adjustments"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Valuation Adjustments</h2><div className="overflow-x-auto"><table className="w-full text-sm text-left text-gray-500"><thead className="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" className="py-3 px-6">Comp Property</th><th scope="col" className="py-3 px-6">Adjustment Feature</th><th scope="col" className="py-3 px-6 text-right">Adjustment Value</th></tr></thead><tbody>{selectedComps.map((comp) => { const compAdjustments = adjustments.find(a => a.id === comp.id); return (<React.Fragment key={comp.id}><tr className="bg-white font-semibold"><td rowSpan={compAdjustments.details.length + 2} className="py-4 px-6 border-b border-r">{comp.address}<br/><span className="font-normal">Sold: ${comp.soldPrice.toLocaleString()}</span></td></tr>{compAdjustments.details.map((detail, detailIndex) => (<tr key={detailIndex} className="bg-white"><td className="py-1 px-6">{detail.feature}</td><td className={`py-1 px-6 text-right font-mono ${detail.adjustment > 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(detail.adjustment)}</td></tr>))}<tr className="bg-gray-50 font-bold"><td className="py-2 px-6 text-gray-800">Adjusted Sale Price</td><td className="py-2 px-6 text-right text-gray-800 font-mono">${compAdjustments.adjustedPrice.toLocaleString(undefined, {maximumFractionDigits: 0})}</td></tr></React.Fragment>);})}</tbody></table></div></section>
+                        <section id="comparison-chart" className="mb-8"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Side-by-Side Comparison</h2><div className="overflow-x-auto"><table className="w-full text-sm text-left text-gray-500"><thead className="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" className="py-3 px-6">Feature</th><th scope="col" className="py-3 px-6 bg-sky-50 text-sky-800">Subject Property</th>{selectedComps.map(comp => <th key={comp.id} scope="col" className="py-3 px-6">{comp.address}</th>)}</tr></thead><tbody>{[
+                            { key: 'status', label: 'Status' },
+                            { key: 'soldPrice', label: 'Sold Price' },
+                            { key: 'listPrice', label: 'List Price' },
+                            { key: 'sqft', label: 'Living Area' },
+                            { key: 'beds', label: 'Bedrooms' },
+                            { key: 'baths', label: 'Bathrooms' },
+                            { key: 'garage', label: 'Garage Spaces' },
+                            { key: 'yearBuilt', label: 'Year Built' },
+                            { key: 'propertyType', label: 'Property Type' },
+                            { key: 'dom', label: 'Days on Market' },
+                            { key: 'pricePerSqft', label: '$/Sq Ft' },
+                            { key: 'lotSizeAcres', label: 'Lot Size (Acres)' },
+                            { key: 'stories', label: 'Stories' }
+                        ].map(field => {
+                            // Get subject property value with better handling
+                            let subjectValue = 'N/A';
+                            const propValue = subjectProperty[field.key];
+
+                            if (['soldPrice', 'listPrice'].includes(field.key)) {
+                                subjectValue = 'N/A';
+                            } else if (field.key === 'pricePerSqft' && subjectProperty.sqft && finalValuation && finalValuation > 0) {
+                                subjectValue = `$${Math.round(finalValuation / subjectProperty.sqft)}`;
+                            } else if (field.key === 'status') {
+                                subjectValue = 'For Sale';
+                            } else if (propValue !== null && propValue !== undefined && propValue !== '') {
+                                // Debug logging for each field
+                                console.log(`Field ${field.key}:`, propValue, typeof propValue);
+                                subjectValue = propValue;
+                            }
+
+                            console.log(`Final ${field.key} value:`, subjectValue);
+
+                            return (<tr key={field.key} className="bg-white border-b">
+                                <td className="py-4 px-6 font-medium text-gray-900 whitespace-nowrap">{field.label}</td>
+                                <td className="py-4 px-6 bg-sky-50 font-semibold">{subjectValue}</td>
+                                {selectedComps.map(comp => <td key={comp.id} className="py-4 px-6">
+                                    {['soldPrice', 'listPrice'].includes(field.key) ?
+                                        `$${(comp[field.key] || 0).toLocaleString()}` :
+                                        (field.key === 'pricePerSqft' ?
+                                            `$${comp[field.key] || 0}` :
+                                            (comp[field.key] && comp[field.key] !== '' && comp[field.key] !== 0 ? comp[field.key] : 'N/A')
+                                        )
+                                    }
+                                </td>)}
+                            </tr>);
+                        })}</tbody></table></div></section>
+
+                        <section id="property-details" className="mb-8">
+                            <h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Property Details</h2>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {selectedComps.map(comp => (
+                                    <div key={comp.id} className="bg-gray-50 p-4 rounded-lg">
+                                        <h3 className="font-semibold text-gray-800 mb-3">{comp.address}</h3>
+                                        <div className="text-sm space-y-1">
+                                            {comp.heating && <p><span className="font-medium">Heating:</span> {comp.heating}</p>}
+                                            {comp.cooling && <p><span className="font-medium">Cooling:</span> {comp.cooling}</p>}
+                                            {comp.basement && <p><span className="font-medium">Basement:</span> {comp.basement}</p>}
+                                            {comp.fireplace && <p><span className="font-medium">Fireplaces:</span> {comp.fireplace}</p>}
+                                            {comp.pool && <p><span className="font-medium">Pool:</span> {comp.pool ? 'Yes' : 'No'}</p>}
+                                            {comp.schoolElementary && <p><span className="font-medium">Elementary:</span> {comp.schoolElementary}</p>}
+                                            {comp.schoolHigh && <p><span className="font-medium">High School:</span> {comp.schoolHigh}</p>}
+                                            {comp.mlsNumber && <p><span className="font-medium">MLS #:</span> {comp.mlsNumber}</p>}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+                        <section id="adjustments"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Valuation Adjustments</h2><div className="overflow-x-auto"><table className="w-full text-sm text-left text-gray-500"><thead className="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" className="py-3 px-6">Comp Property</th><th scope="col" className="py-3 px-6">Adjustment Feature</th><th scope="col" className="py-3 px-6 text-right">Adjustment Value</th></tr></thead><tbody>{selectedComps.map((comp) => { const compAdjustments = adjustments.find(a => a.id === comp.id); return (<React.Fragment key={comp.id}><tr className="bg-white font-semibold"><td rowSpan={compAdjustments.details.length + 2} className="py-4 px-6 border-b border-r">{comp.address}<br /><span className="font-normal">Sold: ${comp.soldPrice.toLocaleString()}</span></td></tr>{compAdjustments.details.map((detail, detailIndex) => (<tr key={detailIndex} className="bg-white"><td className="py-1 px-6">{detail.feature}</td><td className={`py-1 px-6 text-right font-mono ${detail.adjustment > 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(detail.adjustment)}</td></tr>))}<tr className="bg-gray-50 font-bold"><td className="py-2 px-6 text-gray-800">Adjusted Sale Price</td><td className="py-2 px-6 text-right text-gray-800 font-mono">${compAdjustments.adjustedPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td></tr></React.Fragment>); })}</tbody></table></div></section>
                         <footer className="text-center text-xs text-gray-500 pt-8 mt-8 border-t"><p>This report is an estimate of value based on available data and is not a formal appraisal. Market conditions can change rapidly.</p><p>Simple CMA © {new Date().getFullYear()}</p></footer>
                     </div>
                     <div className="flex justify-between mt-8 print-hidden">
                         <button onClick={prevStep} className="inline-flex justify-center rounded-md border border-gray-300 bg-white py-2 px-4 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50">Back to Comps</button>
-                        <div>
-                            <button onClick={startOver} className="mr-4 inline-flex justify-center rounded-md bg-amber-600 text-white font-semibold text-base shadow-sm hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-1 transition-all duration-150 px-6 py-2">Start New Report</button>
-                            <button onClick={handlePrint} className="inline-flex justify-center rounded-md bg-sky-700 text-white font-semibold text-base shadow-sm hover:bg-sky-800 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-1 transition-all duration-150 px-6 py-2">Print Report</button>
-                        </div>
+                        <div><button onClick={startOver} className="mr-4 inline-flex justify-center rounded-md border border-transparent bg-amber-500 py-2 px-4 text-sm font-medium text-white shadow-sm hover:bg-amber-600">Start New Report</button><button onClick={handlePrint} className="inline-flex items-center justify-center rounded-md border border-transparent bg-sky-600 py-2 px-4 text-sm font-medium text-white shadow-sm hover:bg-sky-700"><svg className="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5 2.75C5 1.784 5.784 1 6.75 1h6.5c.966 0 1.75.784 1.75 1.75v3.552c.377.135.74.34 1.057.592l.001.001c.454.37.742.92.742 1.524V15a2 2 0 01-2 2H5a2 2 0 01-2-2V8.418c0-.604.288-1.154.742-1.524l.001-.001a2.986 2.986 0 011.057-.592V2.75zM6.5 2.5a.25.25 0 00-.25.25v3.5a.75.75 0 00.75.75h6.5a.75.75 0 00.75-.75v-3.5a.25.25 0 00-.25-.25h-6.5zM5 8.418a1.5 1.5 0 01-.37.918l-.001.001a.25.25 0 00.184.413h10.372a.25.25 0 00.184-.413l-.001-.001A1.5 1.5 0 0115 8.418V15a.5.5 0 01-.5.5H5.5a.5.5 0 01-.5-.5V8.418z" clipRule="evenodd" /><path d="M7.25 10a.75.75 0 01.75.75v.01a.75.75 0 01-1.5 0V10.75a.75.75 0 01.75-.75zM10 10a.75.75 0 01.75.75v.01a.75.75 0 01-1.5 0V10.75A.75.75 0 0110 10z" /></svg>Print Report</button></div>
                     </div>
                 </div>
             );
         };
-        
 
         const App = () => {
-            const initialSubjectState = { address: '', city: '', sqft: '', basementSqft: '', yearBuilt: '', beds: '', baths: '', garage: '', condition: 'Average', style: '' };
+            const initialSubjectState = {
+                address: '19863 Cottonwood Street',
+                city: 'Gretna',
+                sqft: '2000',
+                basementSqft: '500',
+                yearBuilt: '2010',
+                beds: '4',
+                baths: '3',
+                garage: '2',
+                condition: 'Average',
+                style: 'Ranch'
+            };
             const [step, setStep] = useState(1);
             const [subjectProperty, setSubjectProperty] = useState(initialSubjectState);
             const [selectedComps, setSelectedComps] = useState([]);
@@ -388,4 +672,5 @@
         ReactDOM.render(<App />, document.getElementById('root'));
     </script>
 </body>
+
 </html>
