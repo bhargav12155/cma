@@ -778,6 +778,12 @@
             const [viewMode, setViewMode] = useState('detailed'); // detailed | compact
             const [visibleCount, setVisibleCount] = useState(60); // for compact view pagination
 
+            // Modal state for property details
+            const [showModal, setShowModal] = useState(false);
+            const [modalProperty, setModalProperty] = useState(null);
+            const [modalDetails, setModalDetails] = useState(null);
+            const [modalLoading, setModalLoading] = useState(false);
+
             useEffect(() => {
                 if (viewMode === 'compact') {
                     setVisibleCount(60);
@@ -878,6 +884,34 @@
                     return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>;
                 } else {
                     return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">Sold</span>;
+                }
+            };
+
+            // Function to show property details modal
+            const showPropertyDetails = async (comp) => {
+                setModalProperty(comp);
+                setShowModal(true);
+                setModalLoading(true);
+                setModalDetails(null);
+
+                try {
+                    const response = await fetch('http://gbcma.us-east-2.elasticbeanstalk.com/api/property-details-from-address', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ address: comp.address })
+                    });
+
+                    if (response.ok) {
+                        const details = await response.json();
+                        setModalDetails(details);
+                    } else {
+                        setModalDetails({ error: 'Failed to fetch property details' });
+                    }
+                } catch (error) {
+                    console.error('Error fetching property details:', error);
+                    setModalDetails({ error: 'Network error fetching details' });
+                } finally {
+                    setModalLoading(false);
                 }
             };
 
@@ -1169,15 +1203,23 @@
                                                     </div>
                                                     <p className="text-gray-600">{comp.city} • {comp.subdivision || 'N/A'}</p>
                                                 </div>
-                                                <button
-                                                    onClick={() => toggleComp(comp)}
-                                                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${isSelected
-                                                        ? 'bg-amber-500 text-white hover:bg-amber-600'
-                                                        : 'bg-sky-600 text-white hover:bg-sky-700'
-                                                        }`}
-                                                >
-                                                    {isSelected ? '✓ Selected' : 'Select'}
-                                                </button>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => showPropertyDetails(comp)}
+                                                        className="px-3 py-2 rounded-md text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
+                                                    >
+                                                        👁️ Details
+                                                    </button>
+                                                    <button
+                                                        onClick={() => toggleComp(comp)}
+                                                        className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${isSelected
+                                                            ? 'bg-amber-500 text-white hover:bg-amber-600'
+                                                            : 'bg-sky-600 text-white hover:bg-sky-700'
+                                                            }`}
+                                                    >
+                                                        {isSelected ? '✓ Selected' : 'Select'}
+                                                    </button>
+                                                </div>
                                             </div>
 
                                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1360,6 +1402,176 @@
                                         </div>
                                     );
                                 })}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Property Details Modal */}
+                    {showModal && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[2000] p-4">
+                            <div className="bg-white rounded-lg max-w-4xl max-h-[90vh] overflow-y-auto w-full">
+                                {/* Modal Header */}
+                                <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
+                                    <h2 className="text-xl font-bold text-gray-800">
+                                        🏠 Property Details - {modalProperty?.address}
+                                    </h2>
+                                    <button
+                                        onClick={() => setShowModal(false)}
+                                        className="text-gray-500 hover:text-gray-700 text-2xl"
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+
+                                {/* Modal Content */}
+                                <div className="p-6">
+                                    {modalLoading ? (
+                                        <div className="text-center py-8">
+                                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600 mx-auto"></div>
+                                            <p className="mt-4 text-gray-600">Loading detailed property information...</p>
+                                        </div>
+                                    ) : modalDetails?.error ? (
+                                        <div className="text-center py-8">
+                                            <p className="text-red-600">❌ {modalDetails.error}</p>
+                                            <p className="text-sm text-gray-500 mt-2">Try again or check with your data provider</p>
+                                        </div>
+                                    ) : modalDetails ? (
+                                        <div className="space-y-6">
+                                            {/* Basic Info Grid */}
+                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                                {/* Property Details */}
+                                                <div className="bg-blue-50 p-4 rounded-lg">
+                                                    <h3 className="font-semibold text-blue-800 mb-3">🏠 Property Details</h3>
+                                                    <div className="space-y-2 text-sm">
+                                                        <p><span className="font-medium">Property Type:</span> {modalDetails.PropertyType || 'N/A'}</p>
+                                                        <p><span className="font-medium">Property Sub Type:</span> {modalDetails.PropertySubType || 'N/A'}</p>
+                                                        <p><span className="font-medium">Living Area:</span> {modalDetails.AboveGradeFinishedArea?.toLocaleString() || 'N/A'} sq ft</p>
+                                                        <p><span className="font-medium">Below Grade:</span> {modalDetails.BelowGradeFinishedArea?.toLocaleString() || 'N/A'} sq ft</p>
+                                                        <p><span className="font-medium">Total Area:</span> {modalDetails.TotalFinishedArea?.toLocaleString() || 'N/A'} sq ft</p>
+                                                        <p><span className="font-medium">Year Built:</span> {modalDetails.YearBuilt || 'N/A'}</p>
+                                                        <p><span className="font-medium">Stories:</span> {modalDetails.StoriesTotal || modalDetails.Stories || 'N/A'}</p>
+                                                    </div>
+                                                </div>
+
+                                                {/* Room Details */}
+                                                <div className="bg-green-50 p-4 rounded-lg">
+                                                    <h3 className="font-semibold text-green-800 mb-3">🛏️ Room Details</h3>
+                                                    <div className="space-y-2 text-sm">
+                                                        <p><span className="font-medium">Bedrooms:</span> {modalDetails.BedroomsTotal || 'N/A'}</p>
+                                                        <p><span className="font-medium">Bathrooms:</span> {modalDetails.BathroomsTotalInteger || modalDetails.BathroomsTotal || 'N/A'}</p>
+                                                        <p><span className="font-medium">Full Baths:</span> {modalDetails.BathroomsFull || 'N/A'}</p>
+                                                        <p><span className="font-medium">Half Baths:</span> {modalDetails.BathroomsHalf || 'N/A'}</p>
+                                                        <p><span className="font-medium">Garage Spaces:</span> {modalDetails.GarageSpaces || 'N/A'}</p>
+                                                        <p><span className="font-medium">Parking Total:</span> {modalDetails.ParkingTotal || 'N/A'}</p>
+                                                        <p><span className="font-medium">Fireplaces:</span> {modalDetails.FireplacesTotal || 'N/A'}</p>
+                                                    </div>
+                                                </div>
+
+                                                {/* Lot & Location */}
+                                                <div className="bg-purple-50 p-4 rounded-lg">
+                                                    <h3 className="font-semibold text-purple-800 mb-3">📍 Lot & Location</h3>
+                                                    <div className="space-y-2 text-sm">
+                                                        <p><span className="font-medium">Lot Size:</span> {modalDetails.LotSizeAcres || 'N/A'} acres</p>
+                                                        <p><span className="font-medium">Lot Sq Ft:</span> {modalDetails.LotSizeSquareFeet?.toLocaleString() || 'N/A'} sq ft</p>
+                                                        <p><span className="font-medium">County:</span> {modalDetails.CountyOrParish || 'N/A'}</p>
+                                                        <p><span className="font-medium">Subdivision:</span> {modalDetails.SubdivisionName || 'N/A'}</p>
+                                                        <p><span className="font-medium">Postal Code:</span> {modalDetails.PostalCode || 'N/A'}</p>
+                                                        <p><span className="font-medium">Latitude:</span> {modalDetails.Latitude || 'N/A'}</p>
+                                                        <p><span className="font-medium">Longitude:</span> {modalDetails.Longitude || 'N/A'}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Pricing & Market Info */}
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                <div className="bg-yellow-50 p-4 rounded-lg">
+                                                    <h3 className="font-semibold text-yellow-800 mb-3">💰 Pricing & Market</h3>
+                                                    <div className="space-y-2 text-sm">
+                                                        <p><span className="font-medium">List Price:</span> ${modalDetails.ListPrice?.toLocaleString() || 'N/A'}</p>
+                                                        <p><span className="font-medium">Close Price:</span> ${modalDetails.ClosePrice?.toLocaleString() || 'N/A'}</p>
+                                                        <p><span className="font-medium">Price/Sq Ft:</span> ${modalDetails.ListPricePerSquareFoot || 'N/A'}</p>
+                                                        <p><span className="font-medium">Status:</span> {modalDetails.StandardStatus || 'N/A'}</p>
+                                                        <p><span className="font-medium">On Market Date:</span> {modalDetails.OnMarketDate || 'N/A'}</p>
+                                                        <p><span className="font-medium">Close Date:</span> {modalDetails.CloseDate || 'N/A'}</p>
+                                                        <p><span className="font-medium">Days on Market:</span> {modalDetails.DaysOnMarket || modalDetails.CumulativeDaysOnMarket || 'N/A'}</p>
+                                                    </div>
+                                                </div>
+
+                                                <div className="bg-orange-50 p-4 rounded-lg">
+                                                    <h3 className="font-semibold text-orange-800 mb-3">🔧 Features & Condition</h3>
+                                                    <div className="space-y-2 text-sm">
+                                                        <p><span className="font-medium">Architectural Style:</span> {Array.isArray(modalDetails.ArchitecturalStyle) ? modalDetails.ArchitecturalStyle.join(', ') : modalDetails.ArchitecturalStyle || 'N/A'}</p>
+                                                        <p><span className="font-medium">Property Condition:</span> {Array.isArray(modalDetails.PropertyCondition) ? modalDetails.PropertyCondition.join(', ') : modalDetails.PropertyCondition || 'N/A'}</p>
+                                                        <p><span className="font-medium">Construction:</span> {Array.isArray(modalDetails.ConstructionMaterials) ? modalDetails.ConstructionMaterials.join(', ') : modalDetails.ConstructionMaterials || 'N/A'}</p>
+                                                        <p><span className="font-medium">Foundation:</span> {Array.isArray(modalDetails.FoundationDetails) ? modalDetails.FoundationDetails.join(', ') : modalDetails.FoundationDetails || 'N/A'}</p>
+                                                        <p><span className="font-medium">Heating:</span> {Array.isArray(modalDetails.Heating) ? modalDetails.Heating.join(', ') : modalDetails.Heating || 'N/A'}</p>
+                                                        <p><span className="font-medium">Cooling:</span> {Array.isArray(modalDetails.Cooling) ? modalDetails.Cooling.join(', ') : modalDetails.Cooling || 'N/A'}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Schools & Neighborhood */}
+                                            {(modalDetails.ElementarySchool || modalDetails.MiddleOrJuniorSchool || modalDetails.HighSchool) && (
+                                                <div className="bg-indigo-50 p-4 rounded-lg">
+                                                    <h3 className="font-semibold text-indigo-800 mb-3">🎓 Schools</h3>
+                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                                                        <p><span className="font-medium">Elementary:</span> {modalDetails.ElementarySchool || 'N/A'}</p>
+                                                        <p><span className="font-medium">Middle/Junior:</span> {modalDetails.MiddleOrJuniorSchool || 'N/A'}</p>
+                                                        <p><span className="font-medium">High School:</span> {modalDetails.HighSchool || 'N/A'}</p>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Utilities & Systems */}
+                                            <div className="bg-gray-50 p-4 rounded-lg">
+                                                <h3 className="font-semibold text-gray-800 mb-3">⚡ Utilities & Systems</h3>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                                                    <div>
+                                                        <p><span className="font-medium">Electric:</span> {Array.isArray(modalDetails.Electric) ? modalDetails.Electric.join(', ') : modalDetails.Electric || 'N/A'}</p>
+                                                        <p><span className="font-medium">Water Source:</span> {Array.isArray(modalDetails.WaterSource) ? modalDetails.WaterSource.join(', ') : modalDetails.WaterSource || 'N/A'}</p>
+                                                        <p><span className="font-medium">Sewer:</span> {Array.isArray(modalDetails.Sewer) ? modalDetails.Sewer.join(', ') : modalDetails.Sewer || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p><span className="font-medium">Internet:</span> {Array.isArray(modalDetails.InternetTypes) ? modalDetails.InternetTypes.join(', ') : modalDetails.InternetTypes || 'N/A'}</p>
+                                                        <p><span className="font-medium">Phone:</span> {Array.isArray(modalDetails.PhoneTypes) ? modalDetails.PhoneTypes.join(', ') : modalDetails.PhoneTypes || 'N/A'}</p>
+                                                        <p><span className="font-medium">Cable TV:</span> {Array.isArray(modalDetails.CableTvYN) ? modalDetails.CableTvYN.join(', ') : modalDetails.CableTvYN || 'N/A'}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* MLS Info */}
+                                            <div className="bg-red-50 p-4 rounded-lg">
+                                                <h3 className="font-semibold text-red-800 mb-3">📋 MLS Information</h3>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                                                    <div>
+                                                        <p><span className="font-medium">MLS Number:</span> {modalDetails.ListingKey || modalDetails.MLSNumber || 'N/A'}</p>
+                                                        <p><span className="font-medium">Agent ID:</span> {modalDetails.ListAgentKey || 'N/A'}</p>
+                                                        <p><span className="font-medium">Office ID:</span> {modalDetails.ListOfficeKey || 'N/A'}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p><span className="font-medium">Last Modified:</span> {modalDetails.ModificationTimestamp || 'N/A'}</p>
+                                                        <p><span className="font-medium">Property Status:</span> {modalDetails.PropertyStatus || 'N/A'}</p>
+                                                        <p><span className="font-medium">Possession:</span> {modalDetails.Possession || 'N/A'}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="text-center py-8">
+                                            <p className="text-gray-600">Select a property to view detailed information</p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Modal Footer */}
+                                <div className="sticky bottom-0 bg-white border-t px-6 py-4 flex justify-end">
+                                    <button
+                                        onClick={() => setShowModal(false)}
+                                        className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                                    >
+                                        Close
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     )}
