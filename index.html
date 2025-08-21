@@ -12,6 +12,8 @@
     <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
     <!-- Babel to transpile JSX in the browser -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- SheetJS for Excel export -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <!-- Google Maps Places API -->
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyABw7DX0sg8fmhPt9H6JdlIGO-GikNgWhI&libraries=places"
         async defer></script>
@@ -135,29 +137,63 @@
         const HOME_STYLES = ["", "1.5 Story", "2 Story", "Ranch", "Multi-Level", "Split Entry", "Raised Ranch", "Tri-Level"];
 
         // --- HELPER COMPONENTS ---
-        const ProgressBar = ({ step }) => {
+        const ProgressBar = ({ step, setStep }) => {
             const steps = ['Property Details', 'Select Comps', 'View Report'];
+
+            const handleStepClick = (newStep) => {
+                // Allow navigation only if the new step is not the current one.
+                // You could add more complex logic here, e.g., preventing jumps to the report
+                // if no comps are selected.
+                if (newStep !== step) {
+                    setStep(newStep);
+                }
+            };
+
             return (
                 <nav aria-label="Progress">
-                    <ol role="list" className="space-y-4 md:flex md:space-x-8 md:space-y-0">
-                        {steps.map((name, index) => (
-                            <li key={name} className="md:flex-1">
-                                {step > index + 1 ? (
-                                    <div className="group flex w-full flex-col border-l-4 border-sky-600 py-2 pl-4 transition-colors md:border-l-0 md:border-t-4 md:pb-0 md:pl-0 md:pt-4"><span className="text-sm font-medium text-sky-600 transition-colors">{`Step ${index + 1}`}</span><span className="text-sm font-medium">{name}</span></div>
-                                ) : step === index + 1 ? (
-                                    <div className="flex w-full flex-col border-l-4 border-sky-600 py-2 pl-4 md:border-l-0 md:border-t-4 md:pb-0 md:pl-0 md:pt-4" aria-current="step"><span className="text-sm font-medium text-sky-600">{`Step ${index + 1}`}</span><span className="text-sm font-medium">{name}</span></div>
-                                ) : (
-                                    <div className="group flex w-full flex-col border-l-4 border-gray-200 py-2 pl-4 transition-colors md:border-l-0 md:border-t-4 md:pb-0 md:pl-0 md:pt-4"><span className="text-sm font-medium text-gray-500 transition-colors">{`Step ${index + 1}`}</span><span className="text-sm font-medium">{name}</span></div>
-                                )}
-                            </li>
-                        ))}
+                    <ol role="list" className="flex items-center">
+                        {steps.map((name, index) => {
+                            const stepNumber = index + 1;
+                            const isCompleted = step > stepNumber;
+                            const isCurrent = step === stepNumber;
+
+                            return (
+                                <li key={name} className={`relative ${index !== steps.length - 1 ? 'flex-1' : ''}`}>
+                                    <div
+                                        className={`flex items-center text-sm font-medium cursor-pointer transition-colors duration-200 ${isCurrent || isCompleted ? 'text-sky-600' : 'text-gray-500 hover:text-gray-700'}`}
+                                        onClick={() => handleStepClick(stepNumber)}
+                                    >
+                                        <span className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border-2 ${isCurrent ? 'border-sky-600' : isCompleted ? 'border-sky-600 bg-sky-600' : 'border-gray-300'}`}>
+                                            {isCompleted ? (
+                                                <svg className="h-6 w-6 text-white" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                    <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
+                                                </svg>
+                                            ) : (
+                                                <span className={isCurrent ? 'text-sky-600' : 'text-gray-500'}>{stepNumber}</span>
+                                            )}
+                                        </span>
+                                        <div className="ml-4 text-left">
+                                            <p className="text-xs text-gray-500">Step {stepNumber}</p>
+                                            <p className="font-semibold">{name}</p>
+                                        </div>
+                                    </div>
+
+                                    {/* Connector */}
+                                    {index !== steps.length - 1 && (
+                                        <div className="absolute inset-0 top-5 left-4 -z-10 ml-4 h-0.5 w-full bg-gray-200" aria-hidden="true">
+                                            {isCompleted && <div className="h-0.5 w-full bg-sky-600" />}
+                                        </div>
+                                    )}
+                                </li>
+                            );
+                        })}
                     </ol>
                 </nav>
             );
         };
 
         // --- APP STEPS ---
-        const SubjectPropertyStep = ({ subjectProperty, setSubjectProperty, nextStep }) => {
+        const SubjectPropertyStep = ({ subjectProperty, setSubjectProperty, nextStep, propertyDetailsError, setPropertyDetailsError }) => {
             const addressInputRef = React.useRef(null);
             const autocompleteRef = React.useRef(null);
             const [isSearching, setIsSearching] = useState(false);
@@ -183,25 +219,36 @@
 
                     if (data.error) {
                         setSearchMessage('❌ Property not found in MLS database');
+                        setPropertyDetailsError('Full property data not available (API lookup failed).');
                         return;
                     }
 
-                    // Fill form fields with returned property data
+                    // Fill form fields with returned property data (extended mapping)
                     setSubjectProperty(prev => ({
                         ...prev,
-                        address: data.UnparsedAddress || prev.address,
+                        address: data.UnparsedAddress || data.address || prev.address,
                         city: data.City || prev.city,
-                        sqft: data.AboveGradeFinishedArea || data.LivingArea || prev.sqft,
-                        basementSqft: data.BelowGradeFinishedArea || prev.basementSqft,
+                        sqft: data.AboveGradeFinishedArea || data.LivingArea || data.LivingAreaTotal || prev.sqft,
+                        basementSqft: data.BelowGradeFinishedArea || data.BasementFinishedArea || prev.basementSqft,
                         yearBuilt: data.YearBuilt || prev.yearBuilt,
-                        beds: data.BedroomsTotal || prev.beds,
-                        baths: data.BathroomsTotalInteger || data.BathroomsTotal || prev.baths,
-                        garage: data.GarageSpaces || prev.garage,
+                        beds: data.BedroomsTotal || data.Bedrooms || prev.beds,
+                        baths: data.BathroomsTotalInteger || data.BathroomsTotal || data.BathroomsFull || prev.baths,
+                        garage: data.GarageSpaces || data.ParkingTotal || prev.garage,
                         condition: Array.isArray(data.PropertyCondition) && data.PropertyCondition.length > 0
                             ? data.PropertyCondition[0] : prev.condition,
                         style: Array.isArray(data.ArchitecturalStyle) && data.ArchitecturalStyle.length > 0
                             ? data.ArchitecturalStyle[0] : prev.style,
-                        propertyType: data.PropertyType || prev.propertyType
+                        propertyType: data.PropertyType || prev.propertyType,
+                        propertySubType: data.PropertySubType || prev.propertySubType,
+                        listPrice: data.ListPrice || prev.listPrice,
+                        soldPrice: data.ClosePrice || data.SoldPrice || prev.soldPrice,
+                        lotSizeAcres: data.LotSizeAcres || prev.lotSizeAcres,
+                        lotSizeSquareFeet: data.LotSizeSquareFeet || prev.lotSizeSquareFeet,
+                        stories: data.StoriesTotal || data.Stories || prev.stories,
+                        dom: data.DaysOnMarket || data.CumulativeDaysOnMarket || prev.dom,
+                        pricePerSqft: (data.ListPrice && (data.LivingArea || data.AboveGradeFinishedArea))
+                            ? Math.round(data.ListPrice / (data.LivingArea || data.AboveGradeFinishedArea))
+                            : prev.pricePerSqft
                     }));
 
                     // Handle photos
@@ -229,9 +276,11 @@
                     }
 
                     setSearchMessage(statusMessage);
+                    setPropertyDetailsError('');
                 } catch (error) {
                     console.error('Error fetching property details:', error);
                     setSearchMessage('⚠️ Failed to fetch property details');
+                    setPropertyDetailsError('Full property data not available (network error).');
                 } finally {
                     setIsLoadingDetails(false);
                 }
@@ -265,6 +314,7 @@
                             propertyType: data.propertyType || prev.propertyType
                         }));
                         setSearchMessage(`✅ Property details found and auto-filled! MLS #: ${data.mlsNumber}`);
+                        setPropertyDetailsError('');
                         // After auto-fill, fetch nearby comps and compute quick comparison stats
                         try {
                             const radius = subjectProperty.radiusMiles || data.radiusMiles || 2;
@@ -290,10 +340,12 @@
                         }
                     } else {
                         setSearchMessage('❌ Property not found in MLS. Please enter details manually.');
+                        setPropertyDetailsError('Full property data not available (API lookup failed).');
                     }
                 } catch (error) {
                     console.error('Property search error:', error);
                     setSearchMessage('⚠️ Search failed. Please enter details manually.');
+                    setPropertyDetailsError('Full property data not available (network error).');
                 }
 
                 setIsSearching(false);
@@ -589,14 +641,17 @@
                     </form>
 
                     {/* Search Message */}
-                    {searchMessage && (
-                        <div className="mt-4 p-3 rounded-md bg-blue-50 border border-blue-200">
-                            <p className="text-sm text-blue-800">{searchMessage}</p>
+                    {(searchMessage || propertyDetailsError) && (
+                        <div className="mt-4 p-3 rounded-md border space-y-2 ${propertyDetailsError ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'}">
+                            {searchMessage && <p className="text-sm ${propertyDetailsError ? 'text-red-800' : 'text-blue-800'}">{searchMessage}</p>}
                             {isLoadingDetails && (
                                 <div className="mt-2 flex items-center">
-                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                                    <span className="ml-2 text-xs text-blue-600">Loading property details...</span>
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 ${propertyDetailsError ? 'border-red-600' : 'border-blue-600'}"></div>
+                                    <span className="ml-2 text-xs ${propertyDetailsError ? 'text-red-600' : 'text-blue-600'}">Loading property details...</span>
                                 </div>
+                            )}
+                            {propertyDetailsError && (
+                                <p className="text-xs font-medium text-red-700">{propertyDetailsError}</p>
                             )}
                         </div>
                     )}
@@ -1312,7 +1367,7 @@
             );
         };
 
-        const ReportStep = ({ subjectProperty, selectedComps, prevStep, startOver }) => {
+        const ReportStep = ({ subjectProperty, selectedComps, prevStep, startOver, propertyDetailsError, setPropertyDetailsError }) => {
             useEffect(() => {
                 console.log('ReportStep mounted');
                 console.log('Subject Property:', subjectProperty);
@@ -1322,6 +1377,10 @@
             const [strategy, setStrategy] = useState('');
             const [isDescLoading, setIsDescLoading] = useState(false);
             const [isStratLoading, setIsStratLoading] = useState(false);
+            const [aiVerdict, setAiVerdict] = useState('');
+            const [isVerdictLoading, setIsVerdictLoading] = useState(false);
+            const [subjectDetails, setSubjectDetails] = useState(null); // full raw details from server
+            const [isExporting, setIsExporting] = useState(false);
 
             const avgPricePerSqft = useMemo(() => {
                 if (selectedComps.length === 0) return 180;
@@ -1420,6 +1479,221 @@
             };
             const handlePrint = () => window.print();
 
+            // --- EXPORT HELPERS ---
+            const buildComparisonRows = () => {
+                const fields = [
+                    { key: 'status', label: 'Status' },
+                    { key: 'soldPrice', label: 'Sold Price' },
+                    { key: 'listPrice', label: 'List Price' },
+                    { key: 'sqft', label: 'Living Area (SqFt)' },
+                    { key: 'beds', label: 'Bedrooms' },
+                    { key: 'baths', label: 'Bathrooms' },
+                    { key: 'garage', label: 'Garage Spaces' },
+                    { key: 'yearBuilt', label: 'Year Built' },
+                    { key: 'propertyType', label: 'Property Type' },
+                    { key: 'dom', label: 'Days on Market' },
+                    { key: 'pricePerSqft', label: 'Price / SqFt' },
+                    { key: 'lotSizeAcres', label: 'Lot Size (Acres)' },
+                    { key: 'stories', label: 'Stories' }
+                ];
+                const rows = [];
+                fields.forEach(f => {
+                    const row = { Feature: f.label };
+                    // Subject value
+                    let subjectValue = subjectProperty[f.key];
+                    if (['soldPrice', 'listPrice'].includes(f.key)) {
+                        subjectValue = subjectValue ? subjectValue : '';
+                    } else if (f.key === 'pricePerSqft') {
+                        if (subjectProperty.pricePerSqft) subjectValue = subjectProperty.pricePerSqft;
+                        else if (subjectProperty.listPrice && subjectProperty.sqft) subjectValue = Math.round(subjectProperty.listPrice / subjectProperty.sqft);
+                        else if (subjectProperty.sqft && finalValuation > 0) subjectValue = Math.round(finalValuation / subjectProperty.sqft);
+                        else subjectValue = '';
+                    } else if (f.key === 'status') {
+                        subjectValue = 'For Sale';
+                    }
+                    row.Subject = subjectValue || '';
+                    selectedComps.forEach((comp, idx) => {
+                        let v = comp[f.key];
+                        if (['soldPrice', 'listPrice'].includes(f.key)) v = v ? v : '';
+                        if (f.key === 'pricePerSqft') v = v ? v : '';
+                        row[`Comp ${idx + 1}`] = (v || v === 0) ? v : '';
+                    });
+                    rows.push(row);
+                });
+                return rows;
+            };
+
+            // Helper to flatten nested objects for export (dot notation keys)
+            const flattenObject = (obj, prefix = '', acc = {}) => {
+                if (!obj || typeof obj !== 'object') return acc;
+                Object.keys(obj).forEach(k => {
+                    const val = obj[k];
+                    const newKey = prefix ? `${prefix}.${k}` : k;
+                    if (val && typeof val === 'object' && !Array.isArray(val)) {
+                        flattenObject(val, newKey, acc);
+                    } else {
+                        acc[newKey] = Array.isArray(val) ? JSON.stringify(val) : val;
+                    }
+                });
+                return acc;
+            };
+
+            // On-demand fetch of full subject details (only when exporting)
+            const ensureSubjectDetails = async () => {
+                if (subjectDetails || !subjectProperty.address) return subjectDetails;
+                try {
+                    const resp = await fetch('/api/property-details-from-address', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ address: subjectProperty.address })
+                    });
+                    if (!resp.ok) {
+                        console.warn('Failed to fetch full subject details for export');
+                        setPropertyDetailsError('Full property data not available (API lookup failed).');
+                        return null;
+                    }
+                    const data = await resp.json();
+                    setSubjectDetails(data);
+                    setPropertyDetailsError('');
+                    return data;
+                } catch (e) {
+                    console.error('Error fetching subject details for export:', e);
+                    setPropertyDetailsError('Full property data not available (network error).');
+                    return null;
+                }
+            };
+
+            const exportToExcel = async () => {
+                if (isExporting) return; // prevent double clicks
+                setIsExporting(true);
+                try {
+                    const fullDetails = await ensureSubjectDetails();
+                    // Flatten subject details (if available) for extended attributes
+                    const flatSubject = fullDetails ? flattenObject(fullDetails) : {};
+                    const excludePatterns = /(Media|Photo|Image|Directions|RemarksPublic|Permission|Instructions|IDX)/i;
+                    const flatKeys = Object.keys(flatSubject).filter(k => !excludePatterns.test(k)).sort();
+
+                    // Core comparison fields first
+                    const coreFields = [
+                        { key: 'status', label: 'Status' },
+                        { key: 'soldPrice', label: 'Sold Price' },
+                        { key: 'listPrice', label: 'List Price' },
+                        { key: 'sqft', label: 'Living Area (SqFt)' },
+                        { key: 'beds', label: 'Bedrooms' },
+                        { key: 'baths', label: 'Bathrooms' },
+                        { key: 'garage', label: 'Garage Spaces' },
+                        { key: 'yearBuilt', label: 'Year Built' },
+                        { key: 'propertyType', label: 'Property Type' },
+                        { key: 'dom', label: 'Days on Market' },
+                        { key: 'pricePerSqft', label: 'Price / SqFt' },
+                        { key: 'lotSizeAcres', label: 'Lot Size (Acres)' },
+                        { key: 'stories', label: 'Stories' }
+                    ];
+
+                    // Build header: Feature | Subject | each comp address
+                    const header = ['Feature', 'Subject', ...selectedComps.map(c => c.address)];
+                    const dataRows = [];
+
+                    // Helper to compute subject value for core field
+                    const subjectValueFor = (f) => {
+                        if (f.key === 'soldPrice') return subjectProperty.soldPrice || '';
+                        if (f.key === 'listPrice') return subjectProperty.listPrice || '';
+                        if (f.key === 'pricePerSqft') {
+                            if (subjectProperty.pricePerSqft) return subjectProperty.pricePerSqft;
+                            if (subjectProperty.listPrice && subjectProperty.sqft) return Math.round(subjectProperty.listPrice / subjectProperty.sqft);
+                            if (subjectProperty.sqft && finalValuation > 0) return Math.round(finalValuation / subjectProperty.sqft);
+                            return '';
+                        }
+                        if (f.key === 'status') return 'For Sale';
+                        return subjectProperty[f.key] || '';
+                    };
+
+                    // Core field rows
+                    coreFields.forEach(f => {
+                        const row = [f.label, subjectValueFor(f)];
+                        selectedComps.forEach(comp => {
+                            let v = comp[f.key];
+                            if (['soldPrice', 'listPrice'].includes(f.key)) v = v || '';
+                            if (f.key === 'pricePerSqft') v = v || '';
+                            row.push(v == null ? '' : v);
+                        });
+                        dataRows.push(row);
+                    });
+
+                    // Blank separator or note if details missing
+                    if (flatKeys.length) {
+                        dataRows.push(['', '', ...selectedComps.map(() => '')]);
+                    } else if (!fullDetails) {
+                        dataRows.push(['Subject Full Details', 'Not Available', ...selectedComps.map(() => '')]);
+                    }
+
+                    // Extended subject detail rows
+                    flatKeys.forEach(k => {
+                        const row = [k, flatSubject[k]];
+                        selectedComps.forEach(comp => {
+                            // Direct key lookup only (no deep flatten for comps)
+                            row.push(comp[k] != null ? comp[k] : '');
+                        });
+                        dataRows.push(row);
+                    });
+
+                    // Convert to worksheet manually (aoa_to_sheet)
+                    const aoa = [header, ...dataRows];
+                    const wb = XLSX.utils.book_new();
+                    const ws = XLSX.utils.aoa_to_sheet(aoa);
+                    XLSX.utils.book_append_sheet(wb, ws, 'Comparison');
+
+                    // Adjustments sheet (keep separate)
+                    if (adjustments.length) {
+                        const adjRows = adjustments.map(a => {
+                            const comp = selectedComps.find(c => c.id === a.id) || {};
+                            return {
+                                Address: comp.address,
+                                OriginalPrice: comp.soldPrice || comp.listPrice || '',
+                                TotalAdjustment: a.total,
+                                AdjustedPrice: a.adjustedPrice
+                            };
+                        });
+                        const ws2 = XLSX.utils.json_to_sheet(adjRows);
+                        XLSX.utils.book_append_sheet(wb, ws2, 'Adjustments');
+                    }
+
+                    XLSX.writeFile(wb, `cma_comparison_${Date.now()}.xlsx`);
+                } finally {
+                    setIsExporting(false);
+                }
+            };
+
+            const exportToCSV = async () => {
+                if (isExporting) return;
+                setIsExporting(true);
+                try {
+                    const fullDetails = await ensureSubjectDetails();
+                    const rows = buildComparisonRows();
+                    const headers = Object.keys(rows[0] || {});
+                    let csv = [headers.join(',')].concat(rows.map(r => headers.map(h => JSON.stringify(r[h] ?? '')).join(','))).join('\n');
+                    if (fullDetails) {
+                        const flat = flattenObject(fullDetails);
+                        csv += '\n\n"Subject Full Details"\nField,Value\n' + Object.keys(flat).sort().map(k => `${JSON.stringify(k)},${JSON.stringify(flat[k] ?? '')}`).join('\n');
+                    } else {
+                        csv += '\n\n"Subject Full Details","Not Available"';
+                    }
+                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `cma_comparison_${Date.now()}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                } finally {
+                    setIsExporting(false);
+                }
+            };
+
+            // (Removed full matrix UI & related state)
+
             const callGeminiAPI = async (prompt) => {
                 try {
                     const response = await fetch('/api/generate-text', {
@@ -1477,6 +1751,44 @@
                 setIsStratLoading(false);
             };
 
+            const handleGenerateVerdict = async () => {
+                setIsVerdictLoading(true);
+                setAiVerdict('');
+                try {
+                    // Build subject details safely
+                    const subjectDetails = `
+                        - Address: ${subjectProperty.address}
+                        - Style: ${subjectProperty.style}
+                        - Condition: ${subjectProperty.condition}
+                        - Living Area: ${subjectProperty.sqft || 'N/A'} sqft
+                        - Basement: ${subjectProperty.basementSqft > 0 ? `${subjectProperty.basementSqft} finished sq ft` : 'Unfinished'}
+                        - Beds/Baths: ${subjectProperty.beds || 'N/A'}/${subjectProperty.baths || 'N/A'}
+                        - Garage: ${subjectProperty.garage || 'N/A'} stalls
+                        - Year Built: ${subjectProperty.yearBuilt || 'N/A'}
+                    `;
+
+                    // Null-safe & limited comps (cap at 10 to control prompt size)
+                    const compsSummary = selectedComps.slice(0, 10).map(c => `
+                        - Comp Address: ${c.address}
+                        - Status: ${c.isActive ? 'Active' : 'Sold'}
+                        - Price: ${formatCurrency(c.soldPrice || c.listPrice)}
+                        - Distance: ${c.distance_miles != null && !isNaN(c.distance_miles) ? c.distance_miles.toFixed(1) + ' miles' : 'N/A'}
+                        - Sqft: ${c.sqft || 'N/A'}
+                        - DOM: ${c.dom || 'N/A'}
+                    `).join('');
+
+                    const prompt = `As a senior real estate analyst using Google Gemini, provide a professional "AI Verdict" on a subject property based on the following Comparative Market Analysis (CMA) data.\n\n**Subject Property Details:**\n${subjectDetails}\n\n**Calculated Data:**\n- Estimated Market Value: ${formatCurrency(finalValuation)}\n- Average Price/SqFt of Comps: $${avgPricePerSqft.toFixed(2)}\n\n**Comparable Properties Summary:**\n${compsSummary}\n\n**Your Task:**\nBased *only* on the data provided, generate a concise, professional verdict. Address the following points in a structured format (using markdown for bolding and bullet points):\n1. **Overall Assessment:** One-sentence summary of the property's market position.\n2. **Valuation Confidence:** Indicate whether the estimated value appears solid, aggressive, or conservative, with 1 short reason.\n3. **Key Strengths:** 2-3 bullet points (advantages vs comps).\n4. **Potential Risks:** 2-3 bullet points (possible weaknesses / market concerns).\n5. **Final Recommendation:** Brief actionable suggestion (pricing & positioning).\n\nKeep the response professional, data-driven, and under 220 words.`;
+
+                    const result = await callGeminiAPI(prompt);
+                    setAiVerdict(result);
+                } catch (err) {
+                    console.error('AI Verdict generation error:', err);
+                    setAiVerdict(`Error generating AI Verdict: ${err.message}`);
+                } finally {
+                    setIsVerdictLoading(false);
+                }
+            };
+
             return (
                 <div className="animate-fade-in">
                     <div id="print-area" className="bg-white p-6 sm:p-8 rounded-lg shadow-lg">
@@ -1485,7 +1797,7 @@
 
                         <section id="ai-features" className="my-8 print-hidden">
                             <h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">✨ AI-Powered Insights</h2>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                                 <div>
                                     <button onClick={handleGenerateDescription} disabled={isDescLoading} className="w-full inline-flex items-center justify-center rounded-md border border-transparent bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-sky-700 disabled:bg-gray-400">
                                         {isDescLoading ? 'Generating...' : '✨ Generate Property Description'}
@@ -1498,6 +1810,20 @@
                                     </button>
                                     {strategy && <div className="mt-4 p-4 bg-gray-50 rounded-md border text-sm text-gray-700 whitespace-pre-wrap">{strategy}</div>}
                                 </div>
+                            </div>
+                            <div className="bg-gradient-to-r from-sky-50 to-blue-50 p-6 rounded-xl border border-sky-200 shadow-sm">
+                                <h3 className="text-lg font-bold text-sky-800 mb-3 text-center">AI Market Verdict</h3>
+                                <div className="flex justify-center">
+                                    <button onClick={handleGenerateVerdict} disabled={isVerdictLoading} className="inline-flex items-center justify-center rounded-full border border-transparent bg-gradient-to-r from-sky-600 to-blue-600 px-6 py-3 text-base font-medium text-white shadow-lg hover:from-sky-700 hover:to-blue-700 disabled:bg-gray-400 transform hover:scale-105 transition-transform">
+                                        {isVerdictLoading ? 'Analyzing Data...' : '⚖️ Get AI Verdict'}
+                                    </button>
+                                </div>
+                                {aiVerdict && (
+                                    <div className="mt-4 p-4 bg-white rounded-md border text-sm text-gray-800 whitespace-pre-wrap shadow-inner">
+                                        <p className="text-xs text-gray-500 mb-2 font-semibold uppercase text-center">Powered by Google Gemini</p>
+                                        {aiVerdict}
+                                    </div>
+                                )}
                             </div>
                         </section>
 
@@ -1520,10 +1846,20 @@
                             let subjectValue = 'N/A';
                             const propValue = subjectProperty[field.key];
 
-                            if (['soldPrice', 'listPrice'].includes(field.key)) {
-                                subjectValue = 'N/A';
-                            } else if (field.key === 'pricePerSqft' && subjectProperty.sqft && finalValuation && finalValuation > 0) {
-                                subjectValue = `$${Math.round(finalValuation / subjectProperty.sqft)}`;
+                            if (field.key === 'soldPrice') {
+                                subjectValue = subjectProperty.soldPrice ? `$${Number(subjectProperty.soldPrice).toLocaleString()}` : 'N/A';
+                            } else if (field.key === 'listPrice') {
+                                subjectValue = subjectProperty.listPrice ? `$${Number(subjectProperty.listPrice).toLocaleString()}` : 'N/A';
+                            } else if (field.key === 'pricePerSqft') {
+                                if (subjectProperty.pricePerSqft) {
+                                    subjectValue = `$${subjectProperty.pricePerSqft}`;
+                                } else if (subjectProperty.listPrice && subjectProperty.sqft) {
+                                    subjectValue = `$${Math.round(subjectProperty.listPrice / subjectProperty.sqft)}`;
+                                } else if (subjectProperty.sqft && finalValuation && finalValuation > 0) {
+                                    subjectValue = `$${Math.round(finalValuation / subjectProperty.sqft)}`;
+                                } else {
+                                    subjectValue = 'N/A';
+                                }
                             } else if (field.key === 'status') {
                                 subjectValue = 'For Sale';
                             } else if (propValue !== null && propValue !== undefined && propValue !== '') {
@@ -1569,12 +1905,28 @@
                                 ))}
                             </div>
                         </section>
+
                         <section id="adjustments"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Valuation Adjustments</h2><div className="overflow-x-auto"><table className="w-full text-sm text-left text-gray-500"><thead className="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" className="py-3 px-6">Comp Property</th><th scope="col" className="py-3 px-6">Adjustment Feature</th><th scope="col" className="py-3 px-6 text-right">Adjustment Value</th></tr></thead><tbody>{selectedComps.map((comp) => { const compAdjustments = adjustments.find(a => a.id === comp.id); const salePrice = comp.soldPrice || comp.listPrice || 0; return (<React.Fragment key={comp.id}><tr className="bg-white font-semibold"><td rowSpan={compAdjustments.details.length + 2} className="py-4 px-6 border-b border-r">{comp.address}<br /><span className="font-normal">{comp.isActive ? 'Listed' : 'Sold'}: ${salePrice.toLocaleString()}</span></td></tr>{compAdjustments.details.map((detail, detailIndex) => (<tr key={detailIndex} className="bg-white"><td className="py-1 px-6">{detail.feature}</td><td className={`py-1 px-6 text-right font-mono ${detail.adjustment > 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(detail.adjustment)}</td></tr>))}<tr className="bg-gray-50 font-bold"><td className="py-2 px-6 text-gray-800">Adjusted Sale Price</td><td className="py-2 px-6 text-right text-gray-800 font-mono">${compAdjustments.adjustedPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td></tr></React.Fragment>); })}</tbody></table></div></section>
                         <footer className="text-center text-xs text-gray-500 pt-8 mt-8 border-t"><p>This report is an estimate of value based on available data and is not a formal appraisal. Market conditions can change rapidly.</p><p>Simple CMA © {new Date().getFullYear()}</p></footer>
                     </div>
                     <div className="flex justify-between mt-8 print-hidden">
                         <button onClick={prevStep} className="inline-flex justify-center rounded-md border border-gray-300 bg-white py-2 px-4 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50">Back to Comps</button>
-                        <div><button onClick={startOver} className="mr-4 inline-flex justify-center rounded-md border border-transparent bg-amber-500 py-2 px-4 text-sm font-medium text-white shadow-sm hover:bg-amber-600">Start New Report</button><button onClick={handlePrint} className="inline-flex items-center justify-center rounded-md border border-transparent bg-sky-600 py-2 px-4 text-sm font-medium text-white shadow-sm hover:bg-sky-700"><svg className="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5 2.75C5 1.784 5.784 1 6.75 1h6.5c.966 0 1.75.784 1.75 1.75v3.552c.377.135.74.34 1.057.592l.001.001c.454.37.742.92.742 1.524V15a2 2 0 01-2 2H5a2 2 0 01-2-2V8.418c0-.604.288-1.154.742-1.524l.001-.001a2.986 2.986 0 011.057-.592V2.75zM6.5 2.5a.25.25 0 00-.25.25v3.5a.75.75 0 00.75.75h6.5a.75.75 0 00.75-.75v-3.5a.25.25 0 00-.25-.25h-6.5zM5 8.418a1.5 1.5 0 01-.37.918l-.001.001a.25.25 0 00.184.413h10.372a.25.25 0 00.184-.413l-.001-.001A1.5 1.5 0 0115 8.418V15a.5.5 0 01-.5.5H5.5a.5.5 0 01-.5-.5V8.418z" clipRule="evenodd" /><path d="M7.25 10a.75.75 0 01.75.75v.01a.75.75 0 01-1.5 0V10.75a.75.75 0 01.75-.75zM10 10a.75.75 0 01.75.75v.01a.75.75 0 01-1.5 0V10.75A.75.75 0 0110 10z" /></svg>Print Report</button></div>
+                        <div className="flex flex-wrap items-center gap-3">
+                            <button onClick={startOver} className="inline-flex justify-center rounded-md border border-transparent bg-amber-500 py-2 px-4 text-sm font-medium text-white shadow-sm hover:bg-amber-600">Start New Report</button>
+                            <button onClick={handlePrint} className="inline-flex items-center justify-center rounded-md border border-transparent bg-sky-600 py-2 px-4 text-sm font-medium text-white shadow-sm hover:bg-sky-700">
+                                <svg className="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5 2.75C5 1.784 5.784 1 6.75 1h6.5c.966 0 1.75.784 1.75 1.75v3.552c.377.135.74.34 1.057.592l.001.001c.454.37.742.92.742 1.524V15a2 2 0 01-2 2H5a2 2 0 01-2-2V8.418c0-.604.288-1.154.742-1.524l.001-.001a2.986 2.986 0 011.057-.592V2.75zM6.5 2.5a.25.25 0 00-.25.25v3.5a.75.75 0 00.75.75h6.5a.75.75 0 00.75-.75v-3.5a.25.25 0 00-.25-.25h-6.5zM5 8.418a1.5 1.5 0 01-.37.918l-.001.001a.25.25 0 00.184.413h10.372a.25.25 0 00.184-.413l-.001-.001A1.5 1.5 0 0115 8.418V15a.5.5 0 01-.5.5H5.5a.5.5 0 01-.5-.5V8.418z" clipRule="evenodd" /><path d="M7.25 10a.75.75 0 01.75.75v.01a.75.75 0 01-1.5 0V10.75a.75.75 0 01.75-.75zM10 10a.75.75 0 01.75.75v.01a.75.75 0 01-1.5 0V10.75A.75.75 0 0110 10z" /></svg>
+                                Print
+                            </button>
+                            <button onClick={exportToExcel} disabled={isExporting} className={`inline-flex items-center justify-center rounded-md border border-transparent py-2 px-4 text-sm font-medium text-white shadow-sm ${isExporting ? 'bg-emerald-400 cursor-wait' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+                                <span className="mr-2">📊</span>{isExporting ? 'Exporting...' : 'Excel'}
+                            </button>
+                            <button onClick={exportToCSV} disabled={isExporting} className={`inline-flex items-center justify-center rounded-md border border-transparent py-2 px-4 text-sm font-medium text-white shadow-sm ${isExporting ? 'bg-indigo-400 cursor-wait' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+                                <span className="mr-2">📄</span>{isExporting ? 'Exporting...' : 'CSV'}
+                            </button>
+                            {propertyDetailsError && (
+                                <span className="text-xs text-red-600 font-medium">{propertyDetailsError}</span>
+                            )}
+                        </div>
                     </div>
                 </div>
             );
@@ -1593,83 +1945,61 @@
                 condition: 'Average',
                 style: '',
                 radiusMiles: 2,
-                sqftDelta: 700
+                sqftDelta: 700,
+                propertyType: '',
+                propertySubType: '',
+                listPrice: '',
+                soldPrice: '',
+                lotSizeAcres: '',
+                lotSizeSquareFeet: '',
+                stories: '',
+                dom: '',
+                pricePerSqft: ''
             };
             const [step, setStep] = useState(1);
             const [subjectProperty, setSubjectProperty] = useState(initialSubjectState);
             const [selectedComps, setSelectedComps] = useState([]);
             const [showExplorer, setShowExplorer] = useState(false);
-
-            const PropertyReferenceExplorer = () => {
-                const [filterStr, setFilterStr] = useState("City eq 'Lincoln'");
-                const [selectStr, setSelectStr] = useState("ListingId,ListPrice,City,LivingArea,StandardStatus");
-                const [top, setTop] = useState(5);
-                const [loading, setLoading] = useState(false);
-                const [error, setError] = useState(null);
-                const [data, setData] = useState(null);
-
-                const runQuery = async () => {
-                    setLoading(true); setError(null); setData(null);
-                    try {
-                        const params = new URLSearchParams();
-                        if (filterStr) params.set('$filter', filterStr);
-                        if (selectStr) params.set('$select', selectStr);
-                        if (top) params.set('$top', top);
-                        const resp = await fetch(`/api/property-reference?${params.toString()}`);
-                        if (!resp.ok) {
-                            const txt = await resp.text();
-                            throw new Error(txt || `HTTP ${resp.status}`);
-                        }
-                        const json = await resp.json();
-                        setData(json);
-                    } catch (e) {
-                        setError(e.message);
-                    } finally { setLoading(false); }
-                };
-
-                return (
-                    <div className="mb-8 bg-white p-6 rounded-lg shadow-md animate-fade-in">
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-xl font-bold text-gray-800">Property Reference Explorer (OData)</h2>
-                            <button onClick={runQuery} disabled={loading} className="inline-flex justify-center rounded-md border border-transparent bg-sky-600 py-2 px-4 text-sm font-medium text-white shadow-sm hover:bg-sky-700 disabled:bg-gray-400">{loading ? 'Running...' : 'Run Query'}</button>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                            <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">$filter</label>
-                                <input value={filterStr} onChange={e => setFilterStr(e.target.value)} placeholder="City eq 'Lincoln'" className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 text-sm" />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">$select</label>
-                                <input value={selectStr} onChange={e => setSelectStr(e.target.value)} placeholder="ListingId,ListPrice" className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 text-sm" />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">$top</label>
-                                <input type="number" min="1" value={top} onChange={e => setTop(e.target.value)} className="w-full rounded-md border-gray-300 shadow-sm focus:border-sky-500 focus:ring-sky-500 text-sm" />
-                            </div>
-                        </div>
-                        {error && <div className="text-sm text-red-600 mb-2">{error}</div>}
-                        {data && <pre className="text-xs bg-gray-900 text-gray-100 p-3 rounded-md overflow-auto max-h-72 whitespace-pre-wrap">{JSON.stringify(data.value ? data : data, null, 2)}</pre>}
-                        {!data && !loading && !error && <p className="text-xs text-gray-500">Enter OData params and click Run Query to view raw MLS data.</p>}
-                    </div>
-                );
-            };
-            const nextStep = () => setStep(s => s + 1);
-            const prevStep = () => setStep(s => s - 1);
-            const startOver = () => { setSubjectProperty(initialSubjectState); setSelectedComps([]); setStep(1); };
+            const [propertyDetailsError, setPropertyDetailsError] = useState('');
 
             return (
-                <div className="w-full mx-auto p-4 sm:p-6 lg:p-8">
-                    <div className={`${step === 2 ? 'max-w-full' : 'max-w-5xl'} mx-auto`}>
-                        <div className="bg-white p-6 rounded-lg shadow-md mb-4">
-                            <ProgressBar step={step} />
+                <div className="min-h-screen bg-gradient-to-br from-sky-50 via-white to-blue-50">
+                    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+                        <ProgressBar step={step} setStep={setStep} />
+                        <div className="mt-10">
+                            {step === 1 && (
+                                <SubjectPropertyStep
+                                    subjectProperty={subjectProperty}
+                                    setSubjectProperty={setSubjectProperty}
+                                    nextStep={() => setStep(2)}
+                                    propertyDetailsError={propertyDetailsError}
+                                    setPropertyDetailsError={setPropertyDetailsError}
+                                />
+                            )}
+                            {step === 2 && (
+                                <ComparablesStep
+                                    subjectProperty={subjectProperty}
+                                    selectedComps={selectedComps}
+                                    setSelectedComps={setSelectedComps}
+                                    prevStep={() => setStep(1)}
+                                    nextStep={() => setStep(3)}
+                                />
+                            )}
+                            {step === 3 && (
+                                <ReportStep
+                                    subjectProperty={subjectProperty}
+                                    selectedComps={selectedComps}
+                                    prevStep={() => setStep(2)}
+                                    startOver={() => { setSubjectProperty(initialSubjectState); setSelectedComps([]); setStep(1); }}
+                                    propertyDetailsError={propertyDetailsError}
+                                    setPropertyDetailsError={setPropertyDetailsError}
+                                />
+                            )}
                         </div>
-                        {step === 1 && <SubjectPropertyStep subjectProperty={subjectProperty} setSubjectProperty={setSubjectProperty} nextStep={nextStep} />}
-                        {step === 2 && <ComparablesStep subjectProperty={subjectProperty} selectedComps={selectedComps} setSelectedComps={setSelectedComps} prevStep={prevStep} nextStep={nextStep} />}
-                        {step === 3 && <ReportStep subjectProperty={subjectProperty} selectedComps={selectedComps} prevStep={prevStep} startOver={startOver} />}
                     </div>
                 </div>
             );
-        }
+        };
 
         ReactDOM.render(<App />, document.getElementById('root'));
     </script>
