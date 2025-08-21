@@ -98,7 +98,7 @@
 
         // --- ENHANCED CMA FETCH - Gets both Active and Closed Comparables ---
         const fetchComps = async (city, sqft, yearBuilt, address, radiusMiles = 2, sqftDelta = 700, monthsBack = 6) => {
-            console.log('Fetching CMA comparables:', { city, sqft, yearBuilt, address, radiusMiles, sqftDelta, monthsBack });
+            //console.log('Fetching CMA comparables:', { city, sqft, yearBuilt, address, radiusMiles, sqftDelta, monthsBack });
 
             const params = new URLSearchParams();
             if (address) params.set('address', address);
@@ -109,7 +109,7 @@
             params.set('months_back', monthsBack);
 
             const res = await fetch(`/api/cma-comparables?${params.toString()}`);
-            console.log('CMA API response status:', res.status);
+            //console.log('CMA API response status:', res.status);
 
             if (!res.ok) {
                 console.error('Failed to fetch CMA comparables:', await res.text());
@@ -117,7 +117,7 @@
             }
 
             const data = await res.json();
-            console.log('Fetched CMA data:', data);
+            //console.log('Fetched CMA data:', data);
 
             return {
                 active: data.active || [],
@@ -358,7 +358,7 @@
                     ...prev,
                     [name]: type === 'number' ? (value === '' ? '' : parseFloat(value)) : value
                 }));
-                console.log('Form change:', name, value, type);
+                //console.log('Form change:', name, value, type);
             };
 
             const handleSubmit = (e) => {
@@ -368,12 +368,12 @@
                     alert('Please fill in Address and City');
                     return;
                 }
-                console.log('Subject Property Data on Submit:', subjectProperty);
+                //console.log('Subject Property Data on Submit:', subjectProperty);
                 nextStep();
             };
 
             useEffect(() => {
-                console.log('SubjectPropertyStep mounted');
+                //console.log('SubjectPropertyStep mounted');
 
                 // Initialize Google Places Autocomplete
                 if (window.google && window.google.maps && addressInputRef.current) {
@@ -761,7 +761,7 @@
 
         const ComparablesStep = ({ subjectProperty, selectedComps, setSelectedComps, prevStep, nextStep }) => {
             useEffect(() => {
-                console.log('ComparablesStep mounted');
+                //console.log('ComparablesStep mounted');
                 setTimeout(() => {
                     const element = document.getElementById('comparables-section');
                     if (element) {
@@ -786,11 +786,11 @@
 
             useEffect(() => {
                 setLoading(true);
-                console.log('Subject Property Debug:', subjectProperty); // Debug log
+                //console.log('Subject Property Debug:', subjectProperty); // Debug log
                 fetchComps(subjectProperty.city, subjectProperty.sqft, subjectProperty.yearBuilt, subjectProperty.address, subjectProperty.radiusMiles, subjectProperty.sqftDelta)
                     .then(data => {
                         setCmaData(data);
-                        console.log('CMA Data loaded:', data);
+                        //console.log('CMA Data loaded:', data);
                     })
                     .finally(() => setLoading(false));
             }, [subjectProperty]);
@@ -1369,9 +1369,9 @@
 
         const ReportStep = ({ subjectProperty, selectedComps, prevStep, startOver, propertyDetailsError, setPropertyDetailsError }) => {
             useEffect(() => {
-                console.log('ReportStep mounted');
-                console.log('Subject Property:', subjectProperty);
-                console.log('Selected Comps:', selectedComps);
+                //console.log('ReportStep mounted');
+                //console.log('Subject Property:', subjectProperty);
+                //console.log('Selected Comps:', selectedComps);
             }, []);
             const [description, setDescription] = useState('');
             const [strategy, setStrategy] = useState('');
@@ -1796,7 +1796,6 @@
                         <section id="summary" className="mb-8"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Valuation Summary</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><h3 className="font-semibold text-gray-700">Subject Property</h3><p className="text-lg text-gray-900">{subjectProperty.address}</p><p className="text-gray-600">{subjectProperty.city}</p></div><div className="bg-sky-50 p-4 rounded-lg text-center"><h3 className="font-semibold text-sky-800">Estimated Market Value</h3><p className="text-4xl font-bold text-sky-700 tracking-tight mt-1">{formatCurrency(finalValuation)}</p><div className="flex justify-center gap-4 mt-2 text-sm"><span>Low: {formatCurrency(finalValuation * 0.98)}</span><span>High: {formatCurrency(finalValuation * 1.02)}</span></div></div></div></section>
 
                         <section id="ai-features" className="my-8 print-hidden">
-                            <h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">✨ AI-Powered Insights</h2>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                                 <div>
                                     <button onClick={handleGenerateDescription} disabled={isDescLoading} className="w-full inline-flex items-center justify-center rounded-md border border-transparent bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-sky-700 disabled:bg-gray-400">
@@ -1864,11 +1863,11 @@
                                 subjectValue = 'For Sale';
                             } else if (propValue !== null && propValue !== undefined && propValue !== '') {
                                 // Debug logging for each field
-                                console.log(`Field ${field.key}:`, propValue, typeof propValue);
+                                //console.log(`Field ${field.key}:`, propValue, typeof propValue);
                                 subjectValue = propValue;
                             }
 
-                            console.log(`Final ${field.key} value:`, subjectValue);
+                            //console.log(`Final ${field.key} value:`, subjectValue);
 
                             return (<tr key={field.key} className="bg-white border-b">
                                 <td className="py-4 px-6 font-medium text-gray-900 whitespace-nowrap">{field.label}</td>

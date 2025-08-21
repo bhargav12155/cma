@@ -26,7 +26,7 @@ app.use((req, res, next) => {
       req.body && Object.keys(req.body).length
         ? ` body=${JSON.stringify(req.body)}`
         : "";
-    console.log(`[API REQ] ${req.method} ${req.originalUrl}${q}${b}`);
+    // console.log(`[API REQ] ${req.method} ${req.originalUrl}${q}${b}`);
   }
   next();
 });
@@ -107,7 +107,7 @@ app.get("/api/cma-comparables", async (req, res) => {
     months_back = 6,
   } = req.query;
 
-  console.log("Received CMA comparables request:", req.query);
+  //console.log("Received CMA comparables request:", req.query);
 
   try {
     // Calculate date filter for closed sales (months back from today)
@@ -182,8 +182,8 @@ app.get("/api/cma-comparables", async (req, res) => {
       `$orderby=CloseDate desc&` +
       `$top=50`;
 
-    console.log("Active Properties Query:", activeUrl);
-    console.log("Closed Properties Query:", closedUrl);
+    //console.log("Active Properties Query:", activeUrl);
+    //console.log("Closed Properties Query:", closedUrl);
 
     // Execute both queries in parallel
     const [activeResponse, closedResponse] = await Promise.all([
@@ -219,9 +219,9 @@ app.get("/api/cma-comparables", async (req, res) => {
     const activeProperties = activeData.value || [];
     const closedProperties = closedData.value || [];
 
-    console.log(
-      `Found ${activeProperties.length} active and ${closedProperties.length} closed properties`
-    );
+    // //console.log(
+    //   `Found ${activeProperties.length} active and ${closedProperties.length} closed properties`
+    // );
 
     // Process and enhance the data
     const processProperty = (prop, isActive = false) => {
@@ -314,7 +314,7 @@ app.get("/api/cma-comparables", async (req, res) => {
 
 // Comps endpoint
 app.get("/api/comps", async (req, res) => {
-  console.log("Received request for comps with query:", req.query);
+  //console.log("Received request for comps with query:", req.query);
 
   // Check if server token is configured
   if (paragonApiConfig.serverToken === "YOUR_SERVER_TOKEN_HERE") {
@@ -334,11 +334,11 @@ app.get("/api/comps", async (req, res) => {
     const odataFilter = `$filter=StandardStatus eq 'Closed' and City eq '${city}' and LivingArea ge ${sqft_min} and LivingArea le ${sqft_max}`;
     const searchUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?${odataFilter}&$top=50`;
 
-    console.log("Making request to:", searchUrl);
-    console.log(
-      "Using token:",
-      paragonApiConfig.serverToken.substring(0, 10) + "..."
-    );
+    //console.log("Making request to:", searchUrl);
+    // //console.log(
+    //   "Using token:",
+    //   paragonApiConfig.serverToken.substring(0, 10) + "..."
+    // );
 
     // Fetch properties using Server Token authentication
     const propertyResponse = await fetch(searchUrl, {
@@ -348,7 +348,7 @@ app.get("/api/comps", async (req, res) => {
       },
     });
 
-    console.log("Property response status:", propertyResponse.status);
+    //console.log("Property response status:", propertyResponse.status);
 
     if (!propertyResponse.ok) {
       console.error(
@@ -360,7 +360,7 @@ app.get("/api/comps", async (req, res) => {
 
     const propertyData = await propertyResponse.json();
     const listings = propertyData.value || [];
-    console.log(`Found ${listings.length} comps from Paragon API.`);
+    //console.log(`Found ${listings.length} comps from Paragon API.`);
 
     // Format the results for the frontend with comprehensive field mapping
     const formattedComps = listings.map((record) => ({
@@ -547,11 +547,7 @@ async function findSubjectProperty(address, city) {
           const data = await resp.json();
           if (data.value && data.value.length) {
             const p = data.value[0];
-            console.log(
-              `[SUBJECT] Found via ${
-                filter.includes("tolower") ? "tolower match" : "direct match"
-              } '${filter}'.`
-            );
+
             return {
               address: p.UnparsedAddress || p.Address || base,
               city: p.City || city,
@@ -566,7 +562,7 @@ async function findSubjectProperty(address, city) {
           }
         }
       } catch (e) {
-        console.log("[SUBJECT] Variant search error", e.message);
+        //console.log("[SUBJECT] Variant search error", e.message);
       }
     }
   }
@@ -594,9 +590,7 @@ async function findSubjectProperty(address, city) {
             const data = await resp.json();
             if (data.value && data.value.length) {
               const p = data.value[0];
-              console.log(
-                `[SUBJECT] Found via partial match number='${num}' remainder='${remainder}'.`
-              );
+
               return {
                 address: p.UnparsedAddress || p.Address || base,
                 city: p.City || city,
@@ -616,13 +610,12 @@ async function findSubjectProperty(address, city) {
       }
     }
   }
-  console.log("[SUBJECT] No match found after all strategies.");
   return null;
 }
 
 // Comps-from-address endpoint: find subject by address, then search comps nearby and within sqft delta
 app.get("/api/comps-from-address", async (req, res) => {
-  console.log("Received comps-from-address request:", req.query);
+  //console.log("Received comps-from-address request:", req.query);
 
   if (paragonApiConfig.serverToken === "YOUR_SERVER_TOKEN_HERE") {
     return res.status(500).json({
@@ -658,15 +651,15 @@ app.get("/api/comps-from-address", async (req, res) => {
 
     // Step 1: try to find the subject property by address (reuse property-search logic)
     let subject = await findSubjectProperty(address, city);
-    if (subject) {
-      console.log(
-        `[COMPS] Subject property found. Address='${subject.address}' sqft=${subject.sqft} lat=${subject.latitude} lon=${subject.longitude}`
-      );
-    } else {
-      console.log(
-        `[COMPS] Subject not found for '${address}'. Provide ?sqft=#### to improve range.`
-      );
-    }
+    // if (subject) {
+    //   console.log(
+    //     `[COMPS] Subject property found. Address='${subject.address}' sqft=${subject.sqft} lat=${subject.latitude} lon=${subject.longitude}`
+    //   );
+    // } else {
+    //   console.log(
+    //     `[COMPS] Subject not found for '${address}'. Provide ?sqft=#### to improve range.`
+    //   );
+    // }
 
     // If subject not found, fall back to using provided city and sqft if available
     const subjectSqft = subject
@@ -682,13 +675,13 @@ app.get("/api/comps-from-address", async (req, res) => {
     if (!subjectSqft) {
       sqft_min = 0;
       sqft_max = Math.max(2500, sqftDelta * 5); // broaden search so we can later infer typical size
-      console.log(
-        `[COMPS] Broadening sqft window due to missing subject size -> [${sqft_min}, ${sqft_max}]`
-      );
+      // console.log(
+      //   `[COMPS] Broadening sqft window due to missing subject size -> [${sqft_min}, ${sqft_max}]`
+      // );
     }
-    console.log(
-      `[COMPS] Computed sqft window subjectSqft=${subjectSqft} delta=${sqftDelta} -> range [${sqft_min}, ${sqft_max}] radius=${radiusMiles}mi minResults=${minResults}`
-    );
+    // console.log(
+    //   `[COMPS] Computed sqft window subjectSqft=${subjectSqft} delta=${sqftDelta} -> range [${sqft_min}, ${sqft_max}] radius=${radiusMiles}mi minResults=${minResults}`
+    // );
     let areaClause = `LivingArea ge ${sqft_min} and LivingArea le ${sqft_max}`;
     let locationClause = city ? `City eq '${city}'` : "";
     if (postalCodes.length) {
@@ -700,9 +693,9 @@ app.get("/api/comps-from-address", async (req, res) => {
       locationClause = locationClause
         ? `${locationClause} and ${zipGroup}`
         : zipGroup;
-      console.log(
-        `[COMPS] Applying postalCodes filter: ${postalCodes.join(",")}`
-      );
+      // //console.log(
+      //   `[COMPS] Applying postalCodes filter: ${postalCodes.join(",")}`
+      // );
     }
     const conditions = [
       "StandardStatus eq 'Closed'",
@@ -755,10 +748,6 @@ app.get("/api/comps-from-address", async (req, res) => {
       raw: record,
     }));
 
-    console.log(
-      `[COMPS] Retrieved ${mapped.length} raw comps before distance filter.`
-    );
-
     let filtered = mapped;
     if (subject && subject.latitude && subject.longitude) {
       filtered = mapped
@@ -804,14 +793,11 @@ app.get("/api/comps-from-address", async (req, res) => {
       filtered = mapped.slice(0, Math.min(20, mapped.length));
     }
 
-    console.log(
-      `[COMPS] Returning ${filtered.length} comps (after distance + range filtering).`
-    );
     if (filtered.length) {
       const sample = filtered
         .slice(0, 3)
         .map((c) => ({ id: c.id, sqft: c.sqft, dist: c.distance_miles }));
-      console.log("[COMPS] Sample comps:", sample);
+      // console.log("[COMPS] Sample comps:", sample);
     }
 
     res.json({
@@ -830,7 +816,7 @@ app.get("/api/comps-from-address", async (req, res) => {
 
 // Property search endpoint - search for a specific property by address
 app.get("/api/property-search", async (req, res) => {
-  console.log("Received request for property search with query:", req.query);
+  // console.log("Received request for property search with query:", req.query);
 
   // Check if server token is configured
   if (paragonApiConfig.serverToken === "YOUR_SERVER_TOKEN_HERE") {
@@ -855,7 +841,7 @@ app.get("/api/property-search", async (req, res) => {
     const odataFilter = `$filter=tolower(UnparsedAddress) eq '${address.toLowerCase()}'`;
     const searchUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?${odataFilter}&$top=5`;
 
-    console.log("Making property search request to:", searchUrl);
+    // console.log("Making property search request to:", searchUrl);
 
     // Fetch property using Server Token authentication
     const propertyResponse = await fetch(searchUrl, {
@@ -865,7 +851,7 @@ app.get("/api/property-search", async (req, res) => {
       },
     });
 
-    console.log("Property search response status:", propertyResponse.status);
+    //console.log("Property search response status:", propertyResponse.status);
 
     if (!propertyResponse.ok) {
       console.error(
@@ -877,21 +863,15 @@ app.get("/api/property-search", async (req, res) => {
 
     const propertyData = await propertyResponse.json();
     const properties = propertyData.value || [];
-    console.log(`Found ${properties.length} properties matching address.`);
+    // console.log(`Found ${properties.length} properties matching address.`);
 
     let property = properties[0];
 
     if (!property) {
-      console.log(
-        "[PROPERTY-SEARCH] Direct tolower match failed. Attempting variant strategies..."
-      );
       try {
         const variant = await findSubjectProperty(address, "");
         if (variant && variant.raw) {
           property = variant.raw;
-          console.log(
-            "[PROPERTY-SEARCH] Found property via fallback variant logic."
-          );
         }
       } catch (e) {
         console.log("[PROPERTY-SEARCH] Variant strategy error:", e.message);
