@@ -1,6 +1,7 @@
 {
   "name": "simple-cma-backend",
   "version": "1.0.0",
+  "type": "commonjs",
   "description": "Backend API for Simple CMA Real Estate Application",
   "main": "server.js",
   "scripts": {
