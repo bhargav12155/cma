@@ -102,6 +102,8 @@ app.get("/api/cma-comparables", async (req, res) => {
     address,
     city,
     sqft,
+    latitude,
+    longitude,
     radius_miles = 2,
     sqft_delta = 700,
     months_back = 6,
@@ -232,9 +234,13 @@ app.get("/api/cma-comparables", async (req, res) => {
 
       // Calculate distance if coordinates are available
       let distance_miles = null;
-      if (prop.Latitude && prop.Longitude && address) {
-        // You can implement haversine distance calculation here if needed
-        // For now, we'll leave it as null and let the UI handle it
+      if (prop.Latitude && prop.Longitude && latitude && longitude) {
+        distance_miles = haversineMiles(
+          parseFloat(latitude),
+          parseFloat(longitude),
+          parseFloat(prop.Latitude),
+          parseFloat(prop.Longitude)
+        );
       }
 
       return {
@@ -277,18 +283,34 @@ app.get("/api/cma-comparables", async (req, res) => {
       processProperty(prop, false)
     );
 
+    // Filter by radius if coordinates are provided
+    let filteredActive = processedActive;
+    let filteredClosed = processedClosed;
+
+    if (latitude && longitude) {
+      const radiusFloat = parseFloat(radius_miles);
+      filteredActive = processedActive.filter(
+        (prop) =>
+          prop.distance_miles === null || prop.distance_miles <= radiusFloat
+      );
+      filteredClosed = processedClosed.filter(
+        (prop) =>
+          prop.distance_miles === null || prop.distance_miles <= radiusFloat
+      );
+    }
+
     res.json({
       success: true,
       query: req.query,
       dateFilter,
       counts: {
-        active: processedActive.length,
-        closed: processedClosed.length,
-        total: processedActive.length + processedClosed.length,
+        active: filteredActive.length,
+        closed: filteredClosed.length,
+        total: filteredActive.length + filteredClosed.length,
       },
-      active: processedActive,
-      closed: processedClosed,
-      combined: [...processedActive, ...processedClosed], // For convenience
+      active: filteredActive,
+      closed: filteredClosed,
+      combined: [...filteredActive, ...filteredClosed], // For convenience
       meta: {
         activeQuery: activeUrl,
         closedQuery: closedUrl,
