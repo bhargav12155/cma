@@ -96,47 +96,10 @@
     <script type="text/babel">
         const { useState, useMemo, useEffect } = React;
 
-        // --- ENHANCED CMA FETCH - Gets both Active and Closed Comparables ---
-        const fetchComps = async (city, sqft, yearBuilt, address, radiusMiles = 2, sqftDelta = 700, monthsBack = 6, latitude = null, longitude = null) => {
-            //console.log('Fetching CMA comparables:', { city, sqft, yearBuilt, address, radiusMiles, sqftDelta, monthsBack, latitude, longitude });
-
-            const params = new URLSearchParams();
-            if (address) params.set('address', address);
-            if (city) params.set('city', city);
-            if (sqft) params.set('sqft', sqft);
-            if (latitude) params.set('latitude', latitude);
-            if (longitude) params.set('longitude', longitude);
-            params.set('radius_miles', radiusMiles);
-            params.set('sqft_delta', sqftDelta);
-            params.set('months_back', monthsBack);
-
-            const res = await fetch(`/api/cma-comparables?${params.toString()}`);
-            //console.log('CMA API response status:', res.status);
-
-            if (!res.ok) {
-                console.error('Failed to fetch CMA comparables:', await res.text());
-                return { active: [], closed: [], combined: [] };
-            }
-
-            const data = await res.json();
-            //console.log('Fetched CMA data:', data);
-
-            return {
-                active: data.active || [],
-                closed: data.closed || [],
-                combined: data.combined || [],
-                counts: data.counts || { active: 0, closed: 0, total: 0 },
-                meta: data.meta || {}
-            };
-        };
-
-        // --- ADJUSTMENT VALUES ---
-        const ADJUSTMENT_VALUES = {
-            BATH_FULL: 5000, BATH_HALF: 3000, GARAGE_STALL: 8000, BASEMENT_SQFT: 40,
-            CONDITION: { 'Needs Major Work': -30000, 'Dated': -15000, 'Average': 0, 'Recently Updated': 15000, 'Fully Remodeled': 30000, 'New Construction': 40000, }
-        };
-
-        const HOME_STYLES = ["", "1.5 Story", "2 Story", "Ranch", "Multi-Level", "Split Entry", "Raised Ranch", "Tri-Level"];
+        // Externalized utilities (loaded via additional module scripts appended below)
+        // Fallback stubs if modules haven't loaded yet
+        window.CMA_UTILS = window.CMA_UTILS || {};
+        const { fetchComps = () => Promise.resolve({ active: [], closed: [], combined: [], counts: { active: 0, closed: 0, total: 0 }, meta: {} }), ADJUSTMENT_VALUES = { BATH_FULL: 5000, BATH_HALF: 3000, GARAGE_STALL: 8000, BASEMENT_SQFT: 40, CONDITION: { 'Average': 0 } }, HOME_STYLES = ["", "Ranch", "2 Story"] } = window.CMA_UTILS;
 
         // --- HELPER COMPONENTS ---
         const ProgressBar = ({ step, setStep }) => {
@@ -210,7 +173,7 @@
                 if (!address) return;
 
                 setIsLoadingDetails(true);
-                setSearchMessage('Fetching property details...');
+                setSearchMessage('Searching property database...');
 
                 try {
                     const response = await fetch('/api/property-details-from-address', {
@@ -222,8 +185,8 @@
                     const data = await response.json();
 
                     if (data.error) {
-                        setSearchMessage('Property not found in MLS database');
-                        setPropertyDetailsError('Please enter property details manually below.');
+                        setSearchMessage('Property not found in our database');
+                        setPropertyDetailsError('Unable to retrieve complete property details from our database.');
                         return;
                     }
 
@@ -274,7 +237,7 @@
                     }
 
                     // Create status message with property type info
-                    let statusMessage = `✅ Property details loaded!`;
+                    let statusMessage = `Property details loaded successfully!`;
                     if (data.PropertyType) {
                         statusMessage += ` Property Type: ${data.PropertyType}`;
                         if (data.PropertySubType) {
@@ -292,8 +255,8 @@
                     setPropertyDetailsError('');
                 } catch (error) {
                     console.error('Error fetching property details:', error);
-                    setSearchMessage('Unable to load property details');
-                    setPropertyDetailsError('Please enter property details manually below.');
+                    setSearchMessage('Unable to retrieve property details at this time');
+                    setPropertyDetailsError('Property database temporarily unavailable.');
                 } finally {
                     setIsLoadingDetails(false);
                 }
@@ -326,7 +289,7 @@
                             condition: data.condition || prev.condition,
                             propertyType: data.propertyType || prev.propertyType
                         }));
-                        setSearchMessage(`✅ Property details found and auto-filled! MLS #: ${data.mlsNumber}`);
+                        setSearchMessage(`Property details found and loaded! MLS #: ${data.mlsNumber}`);
                         setPropertyDetailsError('');
                         // After auto-fill, fetch nearby comps and compute quick comparison stats
                         try {
@@ -352,13 +315,13 @@
                             console.error('Error fetching comps for comparison:', err);
                         }
                     } else {
-                        setSearchMessage('Property not found in MLS. Please enter details manually.');
-                        setPropertyDetailsError('Property details are not available for auto-fill.');
+                        setSearchMessage('Property not found in our database. Please enter details manually.');
+                        setPropertyDetailsError('Property details not available in our system.');
                     }
                 } catch (error) {
                     console.error('Property search error:', error);
-                    setSearchMessage('Search failed. Please enter details manually.');
-                    setPropertyDetailsError('Please enter property details manually below.');
+                    setSearchMessage('Search temporarily unavailable. Please enter details manually.');
+                    setPropertyDetailsError('Unable to connect to property database.');
                 }
 
                 setIsSearching(false);
@@ -430,7 +393,7 @@
                             const hasUnit = /\s#\s?\d+/i.test(fullGoogleAddress) || /\bunit\s+\d+/i.test(fullGoogleAddress) || /\bapt\s+\d+/i.test(fullGoogleAddress);
 
                             if (hasUnit) {
-                                setSearchMessage(`Address "${fullGoogleAddress}" contains a unit number. Use "Edit Address" if you need the main property instead.`);
+                                setSearchMessage(`Found "${fullGoogleAddress}" - If this includes an incorrect unit number, use the address override option below.`);
                             }
 
                             setSubjectProperty(prev => ({
@@ -457,7 +420,7 @@
 
             const handleManualAddressOverride = () => {
                 setManualAddressMode(true);
-                setSearchMessage('You can now edit the address manually');
+                setSearchMessage('You can now edit the address to search for the correct property');
 
                 // Clear any previous auto-search results
                 setPropertyPhotos([]);
@@ -474,7 +437,7 @@
                 if (searchAddress) {
                     handlePropertyDetailsFromAddress(searchAddress);
                 } else {
-                    setSearchMessage('Please enter an address to search');
+                    setSearchMessage('Please enter a complete address to search');
                 }
             };
 
@@ -522,7 +485,7 @@
                                         <span className="text-red-500 mr-1">*</span>
                                         Property Address
                                         {manualAddressMode && (
-                                            <span className="ml-2 text-xs bg-sky-100 text-sky-800 px-2 py-1 rounded">Editing</span>
+                                            <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">Custom Address</span>
                                         )}
                                     </label>
                                     <div className="relative">
@@ -535,8 +498,8 @@
                                             onChange={handleChange}
                                             required
                                             className={`w-full pl-4 pr-4 py-3 text-sm bg-white border-2 rounded-lg shadow-sm transition-all duration-200 hover:border-gray-300 font-medium ${manualAddressMode
-                                                    ? 'border-sky-300 focus:border-sky-500 focus:ring-2 focus:ring-sky-200'
-                                                    : 'border-gray-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200'
+                                                ? 'border-blue-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200'
+                                                : 'border-gray-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200'
                                                 }`}
                                             placeholder="🏠 Start typing an address..."
                                         />
@@ -546,15 +509,17 @@
                                     <div className="flex flex-wrap gap-2 mt-2">
                                         {!manualAddressMode ? (
                                             <>
+                                                {googleSelectedAddress && (
+                                                    <div className="text-xs text-gray-600 bg-gray-50 px-2 py-1 rounded">
+                                                        Auto-detected: {googleSelectedAddress}
+                                                    </div>
+                                                )}
                                                 <button
                                                     type="button"
                                                     onClick={handleManualAddressOverride}
-                                                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-full transition-colors flex items-center"
+                                                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-full transition-colors"
                                                 >
-                                                    <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                                    </svg>
-                                                    Edit Address
+                                                    ✏️ Edit Address
                                                 </button>
                                             </>
                                         ) : (
@@ -563,22 +528,16 @@
                                                     type="button"
                                                     onClick={handleManualAddressSearch}
                                                     disabled={isLoadingDetails}
-                                                    className="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-3 py-1 rounded-full transition-colors disabled:opacity-50 flex items-center"
+                                                    className="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-3 py-1 rounded-full transition-colors disabled:opacity-50"
                                                 >
-                                                    <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                                    </svg>
-                                                    Search Property
+                                                    🔍 Search Property
                                                 </button>
                                                 <button
                                                     type="button"
                                                     onClick={resetToGoogleMode}
-                                                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-full transition-colors flex items-center"
+                                                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-full transition-colors"
                                                 >
-                                                    <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                                                    </svg>
-                                                    Auto-Complete
+                                                    ↶ Auto-Complete
                                                 </button>
                                             </>
                                         )}
@@ -761,12 +720,14 @@
                     {/* Search Message */}
                     {(searchMessage || propertyDetailsError) && (
                         <div className={`mt-4 p-3 rounded-md border space-y-2 ${propertyDetailsError ? 'bg-red-50 border-red-200' :
-                                searchMessage.includes('unit number') ? 'bg-yellow-50 border-yellow-200' :
+                            searchMessage.includes('Found') && searchMessage.includes('unit number') ? 'bg-amber-50 border-amber-200' :
+                                searchMessage.includes('edit the address') ? 'bg-blue-50 border-blue-200' :
                                     'bg-blue-50 border-blue-200'
                             }`}>
                             {searchMessage && (
                                 <p className={`text-sm ${propertyDetailsError ? 'text-red-800' :
-                                        searchMessage.includes('unit number') ? 'text-yellow-800' :
+                                    searchMessage.includes('Found') && searchMessage.includes('unit number') ? 'text-amber-800' :
+                                        searchMessage.includes('edit the address') ? 'text-blue-800' :
                                             'text-blue-800'
                                     }`}>
                                     {searchMessage}
@@ -777,7 +738,7 @@
                                     <div className={`animate-spin rounded-full h-4 w-4 border-b-2 ${propertyDetailsError ? 'border-red-600' : 'border-blue-600'
                                         }`}></div>
                                     <span className={`ml-2 text-xs ${propertyDetailsError ? 'text-red-600' : 'text-blue-600'
-                                        }`}>Loading property details...</span>
+                                        }`}>Searching property database...</span>
                                 </div>
                             )}
                             {propertyDetailsError && (
@@ -889,6 +850,152 @@
             );
         };
 
+        // Map Component for displaying properties on Google Maps
+        const MapComponent = ({ subjectProperty, comparables, selectedComps, onSelectComp }) => {
+            const mapRef = React.useRef(null);
+            const mapInstanceRef = React.useRef(null);
+            const markersRef = React.useRef([]);
+
+            React.useEffect(() => {
+                if (!window.google || !window.google.maps) return;
+
+                // Initialize map
+                if (!mapInstanceRef.current && mapRef.current) {
+                    mapInstanceRef.current = new window.google.maps.Map(mapRef.current, {
+                        zoom: 13,
+                        center: {
+                            lat: subjectProperty.latitude || 41.180872,
+                            lng: subjectProperty.longitude || -96.228298
+                        },
+                        mapTypeId: 'hybrid'
+                    });
+                }
+
+                // Clear existing markers
+                markersRef.current.forEach(marker => marker.setMap(null));
+                markersRef.current = [];
+
+                const map = mapInstanceRef.current;
+                if (!map) return;
+
+                // Add subject property marker
+                if (subjectProperty.latitude && subjectProperty.longitude) {
+                    const subjectMarker = new window.google.maps.Marker({
+                        position: { lat: subjectProperty.latitude, lng: subjectProperty.longitude },
+                        map: map,
+                        title: `Subject Property: ${subjectProperty.address}`,
+                        icon: {
+                            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+                                <svg width="30" height="30" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg">
+                                    <circle cx="15" cy="15" r="12" fill="#FF6B6B" stroke="#fff" stroke-width="2"/>
+                                    <text x="15" y="20" text-anchor="middle" fill="white" font-size="16">🏠</text>
+                                </svg>
+                            `),
+                            scaledSize: new window.google.maps.Size(30, 30)
+                        }
+                    });
+
+                    const subjectInfoWindow = new window.google.maps.InfoWindow({
+                        content: `
+                            <div class="p-2">
+                                <h3 class="font-bold text-red-600">Subject Property</h3>
+                                <p class="text-sm">${subjectProperty.address}</p>
+                                <p class="text-xs text-gray-600">${subjectProperty.sqft || 'N/A'} sq ft • ${subjectProperty.yearBuilt || 'N/A'}</p>
+                            </div>
+                        `
+                    });
+
+                    subjectMarker.addListener('click', () => {
+                        subjectInfoWindow.open(map, subjectMarker);
+                    });
+
+                    markersRef.current.push(subjectMarker);
+                }
+
+                // Add comparable property markers
+                comparables.forEach((comp, index) => {
+                    if (!comp.latitude || !comp.longitude) return;
+
+                    const isSelected = selectedComps.some(c => c.id === comp.id);
+                    const price = comp.soldPrice || comp.listPrice || 0;
+                    const pricePerSqft = price && comp.sqft ? Math.round(price / comp.sqft) : 0;
+
+                    const marker = new window.google.maps.Marker({
+                        position: { lat: comp.latitude, lng: comp.longitude },
+                        map: map,
+                        title: `${comp.address} - $${price.toLocaleString()}`,
+                        icon: {
+                            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+                                <svg width="25" height="25" viewBox="0 0 25 25" xmlns="http://www.w3.org/2000/svg">
+                                    <circle cx="12.5" cy="12.5" r="10" fill="${isSelected ? '#F59E0B' : comp.isActive ? '#10B981' : '#3B82F6'}" stroke="#fff" stroke-width="2"/>
+                                    <text x="12.5" y="17" text-anchor="middle" fill="white" font-size="12">${isSelected ? '⭐' : comp.isActive ? '🟢' : '🔵'}</text>
+                                </svg>
+                            `),
+                            scaledSize: new window.google.maps.Size(25, 25)
+                        }
+                    });
+
+                    const infoWindow = new window.google.maps.InfoWindow({
+                        content: `
+                            <div class="p-3 max-w-xs">
+                                <div class="flex justify-between items-start mb-2">
+                                    <h3 class="font-bold text-sm">${comp.address}</h3>
+                                    <span class="text-xs px-2 py-1 rounded ${comp.isActive ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}">${comp.isActive ? 'Active' : 'Sold'}</span>
+                                </div>
+                                <p class="text-sm font-semibold text-gray-900">$${price.toLocaleString()}</p>
+                                ${comp.sqft ? `<p class="text-xs text-gray-600">${comp.sqft.toLocaleString()} sq ft${pricePerSqft > 0 ? ` • $${pricePerSqft}/sq ft` : ''}</p>` : ''}
+                                ${comp.distance_miles !== undefined ? `<p class="text-xs text-gray-600">${comp.distance_miles.toFixed(2)} miles away</p>` : ''}
+                                <button onclick="window.toggleCompFromMap('${comp.id}')" class="mt-2 px-3 py-1 text-xs font-medium rounded ${isSelected ? 'bg-red-100 text-red-700' : 'bg-sky-100 text-sky-700'} hover:opacity-80">
+                                    ${isSelected ? 'Remove' : 'Add to Comparison'}
+                                </button>
+                            </div>
+                        `
+                    });
+
+                    marker.addListener('click', () => {
+                        infoWindow.open(map, marker);
+                    });
+
+                    markersRef.current.push(marker);
+                });
+
+                // Fit map to show all markers
+                if (markersRef.current.length > 0) {
+                    const bounds = new window.google.maps.LatLngBounds();
+                    markersRef.current.forEach(marker => {
+                        bounds.extend(marker.getPosition());
+                    });
+                    map.fitBounds(bounds);
+
+                    // Ensure minimum zoom level
+                    window.google.maps.event.addListenerOnce(map, 'bounds_changed', () => {
+                        if (map.getZoom() > 16) {
+                            map.setZoom(16);
+                        }
+                    });
+                }
+
+            }, [subjectProperty, comparables, selectedComps]);
+
+            // Global function for map info window buttons
+            React.useEffect(() => {
+                window.toggleCompFromMap = (compId) => {
+                    const comp = comparables.find(c => c.id === compId);
+                    if (comp) {
+                        onSelectComp(comp);
+                    }
+                };
+
+                return () => {
+                    delete window.toggleCompFromMap;
+                };
+            }, [comparables, onSelectComp]);
+
+            return (
+                <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
+            );
+        };
+
         const ComparablesStep = ({ subjectProperty, selectedComps, setSelectedComps, prevStep, nextStep }) => {
             useEffect(() => {
                 //console.log('ComparablesStep mounted');
@@ -905,8 +1012,13 @@
             const [sortBy, setSortBy] = useState('distance'); // distance, price, size, date
             const [filterBy, setFilterBy] = useState('all'); // all, similar_size, similar_age, similar_style, similar_subdivision, active_only, closed_only
             const [activeTab, setActiveTab] = useState('all'); // all, active, closed
-            const [viewMode, setViewMode] = useState('detailed'); // detailed | compact
+            const [viewMode, setViewMode] = useState('detailed'); // detailed | compact | map
             const [visibleCount, setVisibleCount] = useState(60); // for compact view pagination
+
+            // Expand search state
+            const [showExpandSearch, setShowExpandSearch] = useState(false);
+            const [expandedRadius, setExpandedRadius] = useState(subjectProperty.radiusMiles || 2);
+            const [expandedSqftDelta, setExpandedSqftDelta] = useState(subjectProperty.sqftDelta || 500);
 
             // Modal state for property details
             const [showModal, setShowModal] = useState(false);
@@ -919,6 +1031,28 @@
                     setVisibleCount(60);
                 }
             }, [viewMode]);
+
+            const handleExpandSearch = async () => {
+                setLoading(true);
+                setShowExpandSearch(false);
+
+                try {
+                    const data = await fetchComps(
+                        subjectProperty.city,
+                        subjectProperty.sqft,
+                        subjectProperty.yearBuilt,
+                        subjectProperty.address,
+                        expandedRadius,
+                        expandedSqftDelta,
+                        6, // monthsBack
+                        subjectProperty.latitude,
+                        subjectProperty.longitude
+                    );
+                    setCmaData(data);
+                } finally {
+                    setLoading(false);
+                }
+            };
 
             useEffect(() => {
                 setLoading(true);
@@ -1228,522 +1362,654 @@
                                     type="button"
                                     onClick={() => setViewMode('detailed')}
                                     className={`px-4 py-2 text-xs font-medium transition ${viewMode === 'detailed' ? 'bg-sky-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
-                                >Detailed</button>
+                                >📋 Detailed</button>
                                 <button
                                     type="button"
                                     onClick={() => setViewMode('compact')}
                                     className={`px-4 py-2 text-xs font-medium border-l border-gray-200 transition ${viewMode === 'compact' ? 'bg-sky-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
-                                >Compact Grid</button>
+                                >🏘️ Compact Grid</button>
+                                <button
+                                    type="button"
+                                    onClick={() => setViewMode('map')}
+                                    className={`px-4 py-2 text-xs font-medium border-l border-gray-200 transition ${viewMode === 'map' ? 'bg-sky-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+                                >🗺️ Map View</button>
                             </div>
                             {viewMode === 'compact' && (
                                 <span className="text-xs text-gray-500">Showing {displayedComps.length} of {sortedAndFilteredComps.length}</span>
                             )}
+
+                            {/* Expand Search Toggle */}
+                            <button
+                                type="button"
+                                onClick={() => setShowExpandSearch(!showExpandSearch)}
+                                className="inline-flex items-center px-3 py-2 text-xs font-medium text-sky-700 bg-sky-50 border border-sky-200 rounded-lg hover:bg-sky-100 transition"
+                            >
+                                🔍 Expand Search ({cmaData.counts.total} found)
+                            </button>
                         </div>
 
-                        {/* Enhanced Controls */}
-                        <div className="bg-gradient-to-r from-gray-50 to-blue-50 p-6 rounded-xl mb-6 border border-gray-200 shadow-sm">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div className="space-y-2">
-                                    <label className="flex items-center text-sm font-semibold text-gray-800 mb-3">
-                                        <svg className="w-4 h-4 mr-2 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-                                        </svg>
-                                        Sort by:
-                                    </label>
-                                    <div className="relative">
-                                        <select
-                                            value={sortBy}
-                                            onChange={(e) => setSortBy(e.target.value)}
-                                            className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium"
-                                        >
-                                            <option value="distance">🎯 Distance (closest first)</option>
-                                            <option value="price">💰 Price (highest first)</option>
-                                            <option value="size">📐 Size (largest first)</option>
-                                            <option value="date">📅 Date (newest first)</option>
-                                        </select>
-                                        <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                                            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                            </svg>
+                        {/* Expand Search Controls */}
+                        {showExpandSearch && (
+                            <div className="mb-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                                <h4 className="text-sm font-semibold text-gray-800 mb-3">Adjust Search Parameters</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                                            Search Radius: {expandedRadius} miles
+                                        </label>
+                                        <input
+                                            type="range"
+                                            min="0.5"
+                                            max="10"
+                                            step="0.5"
+                                            value={expandedRadius}
+                                            onChange={(e) => setExpandedRadius(parseFloat(e.target.value))}
+                                            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                        />
+                                        <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                            <span>0.5 mi</span>
+                                            <span>Current: {subjectProperty.radiusMiles} mi</span>
+                                            <span>10 mi</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                                            Square Footage Range: ±{expandedSqftDelta} sq ft
+                                        </label>
+                                        <input
+                                            type="range"
+                                            min="100"
+                                            max="2000"
+                                            step="100"
+                                            value={expandedSqftDelta}
+                                            onChange={(e) => setExpandedSqftDelta(parseInt(e.target.value))}
+                                            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                        />
+                                        <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                            <span>±100</span>
+                                            <span>Current: ±{subjectProperty.sqftDelta}</span>
+                                            <span>±2000</span>
                                         </div>
                                     </div>
                                 </div>
-                                <div className="space-y-2">
-                                    <label className="flex items-center text-sm font-semibold text-gray-800 mb-3">
-                                        <svg className="w-4 h-4 mr-2 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.207A1 1 0 013 6.5V4z" />
+                                <div className="flex gap-2 mt-4">
+                                    <button
+                                        type="button"
+                                        onClick={handleExpandSearch}
+                                        disabled={loading}
+                                        className="px-4 py-2 text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 rounded-lg disabled:opacity-50 transition"
+                                    >
+                                        {loading ? 'Searching...' : 'Update Search'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowExpandSearch(false)}
+                                        className="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-200 hover:bg-gray-300 rounded-lg transition"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Enhanced Controls */}
+                    <div className="bg-gradient-to-r from-gray-50 to-blue-50 p-6 rounded-xl mb-6 border border-gray-200 shadow-sm">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                                <label className="flex items-center text-sm font-semibold text-gray-800 mb-3">
+                                    <svg className="w-4 h-4 mr-2 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+                                    </svg>
+                                    Sort by:
+                                </label>
+                                <div className="relative">
+                                    <select
+                                        value={sortBy}
+                                        onChange={(e) => setSortBy(e.target.value)}
+                                        className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium"
+                                    >
+                                        <option value="distance">🎯 Distance (closest first)</option>
+                                        <option value="price">💰 Price (highest first)</option>
+                                        <option value="size">📐 Size (largest first)</option>
+                                        <option value="date">📅 Date (newest first)</option>
+                                    </select>
+                                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                                        <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                                         </svg>
-                                        Filter by:
-                                    </label>
-                                    <div className="relative">
-                                        <select
-                                            value={filterBy}
-                                            onChange={(e) => setFilterBy(e.target.value)}
-                                            className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium"
-                                        >
-                                            <option value="all">🏠 All properties</option>
-                                            <option value="similar_size">📏 Similar size (±500 sq ft)</option>
-                                            <option value="similar_age">🗓️ Similar age (±10 years)</option>
-                                            <option value="similar_style">🏡 Similar style</option>
-                                            <option value="similar_subdivision">🏘️ Same subdivision</option>
-                                            <option value="active_only">🟢 Active listings only</option>
-                                            <option value="closed_only">🔵 Sold properties only</option>
-                                        </select>
-                                        <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                                            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                            </svg>
-                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="flex items-center text-sm font-semibold text-gray-800 mb-3">
+                                    <svg className="w-4 h-4 mr-2 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.207A1 1 0 013 6.5V4z" />
+                                    </svg>
+                                    Filter by:
+                                </label>
+                                <div className="relative">
+                                    <select
+                                        value={filterBy}
+                                        onChange={(e) => setFilterBy(e.target.value)}
+                                        className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium"
+                                    >
+                                        <option value="all">🏠 All properties</option>
+                                        <option value="similar_size">📏 Similar size (±500 sq ft)</option>
+                                        <option value="similar_age">🗓️ Similar age (±10 years)</option>
+                                        <option value="similar_style">🏡 Similar style</option>
+                                        <option value="similar_subdivision">🏘️ Same subdivision</option>
+                                        <option value="active_only">🟢 Active listings only</option>
+                                        <option value="closed_only">🔵 Sold properties only</option>
+                                    </select>
+                                    <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                                        <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                        </svg>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    {loading ? (
-                        <div className="text-center py-8">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-sky-600 mx-auto mb-4"></div>
-                            <p>Loading comparable properties...</p>
-                        </div>
-                    ) : (
-                        <div className={`${viewMode === 'compact' ? 'overflow-visible pr-0' : 'overflow-y-auto pr-4'} ${viewMode === 'compact' ? '' : 'space-y-6'}`} style={viewMode === 'compact' ? undefined : { maxHeight: 'calc(100vh - 180px)' }}>
-                            {viewMode === 'compact' && (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 mb-6">
-                                    {displayedComps.map(comp => {
-                                        const isSelected = selectedComps.some(c => c.id === comp.id);
-                                        const price = comp.soldPrice || comp.listPrice || 0;
-                                        const pricePerSqft = price && comp.sqft ? Math.round(price / comp.sqft) : 0;
-                                        return (
-                                            <div key={comp.id} className={`relative border rounded-lg p-3 bg-white transition shadow-sm hover:shadow-md ${isSelected ? 'ring-2 ring-sky-500' : 'border-gray-200'}`}>
+                    {/* Main Content Area */}
+                    <div className="lg:pr-6">
+                        {loading ? (
+                            <div className="text-center py-8">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-sky-600 mx-auto mb-4"></div>
+                                <p>Loading comparable properties...</p>
+                            </div>
+                        ) : (
+                            <div className={`${viewMode === 'compact' ? 'overflow-visible pr-0' : 'overflow-y-auto pr-4'} ${viewMode === 'compact' ? '' : 'space-y-6'}`} style={viewMode === 'compact' ? undefined : { maxHeight: 'calc(100vh - 180px)' }}>
+                                {/* Content will continue here... */}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Property Details Modal */}
+                    {
+                        showModal && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 mb-6">
+                                {displayedComps.map(comp => {
+                                    const isSelected = selectedComps.some(c => c.id === comp.id);
+                                    const price = comp.soldPrice || comp.listPrice || 0;
+                                    const pricePerSqft = price && comp.sqft ? Math.round(price / comp.sqft) : 0;
+                                    return (
+                                        <div key={comp.id} className={`relative border rounded-lg p-3 bg-white transition shadow-sm hover:shadow-md ${isSelected ? 'ring-2 ring-sky-500' : 'border-gray-200'}`}>
+                                            <button
+                                                onClick={() => toggleComp(comp)}
+                                                className={`absolute top-2 right-2 text-[10px] px-2 py-1 rounded-md font-semibold shadow ${isSelected ? 'bg-amber-500 text-white' : 'bg-sky-600 text-white hover:bg-sky-700'}`}
+                                            >{isSelected ? '✓' : 'Add'}</button>
+                                            <img
+                                                src={comp.imageUrl}
+                                                alt={comp.address}
+                                                className="w-full h-28 object-cover rounded-md mb-2"
+                                                onError={(e) => { e.target.style.display = 'none'; }}
+                                            />
+                                            <h3 className="text-xs font-semibold text-gray-800 leading-snug mb-1 line-clamp-2">{comp.address}</h3>
+                                            <div className="flex flex-wrap gap-x-2 gap-y-1 text-[10px] text-gray-600">
+                                                <span className="font-medium text-gray-800">${price.toLocaleString()}</span>
+                                                {comp.sqft && <span>{comp.sqft.toLocaleString()} sf</span>}
+                                                {pricePerSqft > 0 && <span>${pricePerSqft}/sf</span>}
+                                                {comp.distance_miles !== undefined && comp.distance_miles !== null &&
+                                                    <span>
+                                                        {comp.distance_miles === 0 ? 'Subject' : `${comp.distance_miles.toFixed(2)} mi`}
+                                                    </span>
+                                                }
+                                                <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-semibold ${comp.isActive ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{comp.isActive ? 'Active' : 'Sold'}</span>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )
+                    }
+
+                    {
+                        viewMode === 'map' && (
+                            <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                                <div className="p-4 border-b border-gray-200">
+                                    <h3 className="text-lg font-semibold text-gray-800 mb-2">Property Map View</h3>
+                                    <div className="flex flex-wrap gap-4 text-sm">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-red-500">🏠</span>
+                                            <span>Subject Property</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-green-500">🟢</span>
+                                            <span>Active Listings</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-blue-500">🔵</span>
+                                            <span>Recent Sales</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-yellow-500">⭐</span>
+                                            <span>Selected Comparables</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style={{ height: '600px' }}>
+                                    <MapComponent
+                                        subjectProperty={subjectProperty}
+                                        comparables={displayedComps}
+                                        selectedComps={selectedComps}
+                                        onSelectComp={toggleComp}
+                                    />
+                                </div>
+                            </div>
+                        )
+                    }
+
+                    {
+                        viewMode === 'detailed' && displayedComps.map(comp => {
+                            const isSelected = selectedComps.some(c => c.id === comp.id);
+                            const price = comp.soldPrice || comp.listPrice || 0;
+                            const pricePerSqft = price && comp.sqft ? Math.round(price / comp.sqft) : 0;
+
+                            return (
+                                <div
+                                    key={comp.id}
+                                    className={`bg-white rounded-lg shadow-md overflow-hidden transition-all border-2 ${isSelected ? 'border-sky-500 bg-sky-50' : 'border-gray-200 hover:border-gray-300'
+                                        }`}
+                                >
+                                    <div className="p-6">
+                                        {/* Header */}
+                                        <div className="flex justify-between items-start mb-4">
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <h3 className="text-lg font-bold text-gray-800">{comp.address}</h3>
+                                                    {getStatusBadge(comp)}
+                                                </div>
+                                                <p className="text-gray-600">{comp.city} • {comp.subdivision || 'N/A'}</p>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={() => showPropertyDetails(comp)}
+                                                    className="px-3 py-2 rounded-md text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
+                                                >
+                                                    👁️ Details
+                                                </button>
                                                 <button
                                                     onClick={() => toggleComp(comp)}
-                                                    className={`absolute top-2 right-2 text-[10px] px-2 py-1 rounded-md font-semibold shadow ${isSelected ? 'bg-amber-500 text-white' : 'bg-sky-600 text-white hover:bg-sky-700'}`}
-                                                >{isSelected ? '✓' : 'Add'}</button>
+                                                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${isSelected
+                                                        ? 'bg-amber-500 text-white hover:bg-amber-600'
+                                                        : 'bg-sky-600 text-white hover:bg-sky-700'
+                                                        }`}
+                                                >
+                                                    {isSelected ? '✓ Selected' : 'Select'}
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                            {/* Left: Photo and Price */}
+                                            <div className="space-y-4">
                                                 <img
                                                     src={comp.imageUrl}
-                                                    alt={comp.address}
-                                                    className="w-full h-28 object-cover rounded-md mb-2"
-                                                    onError={(e) => { e.target.style.display = 'none'; }}
+                                                    alt={`View of ${comp.address}`}
+                                                    className="w-full h-48 object-cover rounded-md"
+                                                    onError={(e) => {
+                                                        e.target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzllYTNhOCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPk5vIFBob3RvPC90ZXh0Pjwvc3ZnPg==';
+                                                    }}
                                                 />
-                                                <h3 className="text-xs font-semibold text-gray-800 leading-snug mb-1 line-clamp-2">{comp.address}</h3>
-                                                <div className="flex flex-wrap gap-x-2 gap-y-1 text-[10px] text-gray-600">
-                                                    <span className="font-medium text-gray-800">${price.toLocaleString()}</span>
-                                                    {comp.sqft && <span>{comp.sqft.toLocaleString()} sf</span>}
-                                                    {pricePerSqft > 0 && <span>${pricePerSqft}/sf</span>}
-                                                    {comp.distance_miles !== undefined && comp.distance_miles !== null &&
-                                                        <span>
-                                                            {comp.distance_miles === 0 ? 'Subject' : `${comp.distance_miles.toFixed(2)} mi`}
-                                                        </span>
-                                                    }
-                                                    <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-semibold ${comp.isActive ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{comp.isActive ? 'Active' : 'Sold'}</span>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
 
-                            {viewMode === 'detailed' && displayedComps.map(comp => {
-                                const isSelected = selectedComps.some(c => c.id === comp.id);
-                                const price = comp.soldPrice || comp.listPrice || 0;
-                                const pricePerSqft = price && comp.sqft ? Math.round(price / comp.sqft) : 0;
-
-                                return (
-                                    <div
-                                        key={comp.id}
-                                        className={`bg-white rounded-lg shadow-md overflow-hidden transition-all border-2 ${isSelected ? 'border-sky-500 bg-sky-50' : 'border-gray-200 hover:border-gray-300'
-                                            }`}
-                                    >
-                                        <div className="p-6">
-                                            {/* Header */}
-                                            <div className="flex justify-between items-start mb-4">
-                                                <div className="flex-1">
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <h3 className="text-lg font-bold text-gray-800">{comp.address}</h3>
-                                                        {getStatusBadge(comp)}
+                                                {/* 🏷 Price & Market Context */}
+                                                <div className={`p-4 rounded-md ${comp.isActive ? 'bg-green-50' : 'bg-blue-50'}`}>
+                                                    <h4 className={`font-semibold mb-2 ${comp.isActive ? 'text-green-800' : 'text-blue-800'}`}>
+                                                        🏷 Price & Market
+                                                    </h4>
+                                                    <div className="space-y-1 text-sm">
+                                                        {comp.isActive ? (
+                                                            <>
+                                                                <p><span className="font-medium">List Price:</span> <span className="text-green-600 font-bold">${comp.listPrice?.toLocaleString()}</span></p>
+                                                                <p><span className="font-medium">Days on Market:</span> {comp.dom || 'New'}</p>
+                                                                <p><span className="font-medium">Listed:</span> {comp.onMarketDate}</p>
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <p><span className="font-medium">Sold Price:</span> <span className="text-blue-600 font-bold">${comp.soldPrice?.toLocaleString()}</span></p>
+                                                                {comp.listPrice && <p><span className="font-medium">List Price:</span> ${comp.listPrice?.toLocaleString()}</p>}
+                                                                <p><span className="font-medium">Sale Date:</span> {comp.closeDate}</p>
+                                                            </>
+                                                        )}
+                                                        <p><span className="font-medium">Price/Sq Ft:</span> <span className="font-semibold">${pricePerSqft}</span></p>
                                                     </div>
-                                                    <p className="text-gray-600">{comp.city} • {comp.subdivision || 'N/A'}</p>
-                                                </div>
-                                                <div className="flex gap-2">
-                                                    <button
-                                                        onClick={() => showPropertyDetails(comp)}
-                                                        className="px-3 py-2 rounded-md text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
-                                                    >
-                                                        👁️ Details
-                                                    </button>
-                                                    <button
-                                                        onClick={() => toggleComp(comp)}
-                                                        className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${isSelected
-                                                            ? 'bg-amber-500 text-white hover:bg-amber-600'
-                                                            : 'bg-sky-600 text-white hover:bg-sky-700'
-                                                            }`}
-                                                    >
-                                                        {isSelected ? '✓ Selected' : 'Select'}
-                                                    </button>
                                                 </div>
                                             </div>
 
-                                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                                                {/* Left: Photo and Price */}
-                                                <div className="space-y-4">
-                                                    <img
-                                                        src={comp.imageUrl}
-                                                        alt={`View of ${comp.address}`}
-                                                        className="w-full h-48 object-cover rounded-md"
-                                                        onError={(e) => {
-                                                            e.target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzllYTNhOCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPk5vIFBob3RvPC90ZXh0Pjwvc3ZnPg==';
-                                                        }}
-                                                    />
+                                            {/* Property Specs Only */}
+                                            <div className="space-y-4">
+                                                {/* 🏠 Property Specs */}
+                                                <div className="bg-indigo-50 p-4 rounded-md">
+                                                    <h4 className="font-semibold text-indigo-800 mb-2">🏠 Property Specs</h4>
+                                                    <div className="space-y-1 text-sm">
+                                                        <p><span className="font-medium">Living Area:</span> <span className="font-semibold">{comp.sqft?.toLocaleString()}</span> sq ft</p>
+                                                        <p><span className="font-medium">Basement:</span> {comp.basementSqft ? `${comp.basementSqft.toLocaleString()} sq ft` : 'None'}</p>
+                                                        <p><span className="font-medium">Lot Size:</span> {comp.lotSizeAcres ? `${comp.lotSizeAcres} acres` : 'N/A'}</p>
+                                                        <p><span className="font-medium">Bed/Bath:</span> {comp.beds} bed, {comp.baths} bath</p>
+                                                        <p><span className="font-medium">Garage:</span> {comp.garage} spaces</p>
+                                                        <p><span className="font-medium">Year Built:</span> {comp.yearBuilt}</p>
+                                                        <p><span className="font-medium">Style:</span> {comp.style || 'N/A'}</p>
+                                                        <p><span className="font-medium">Subdivision:</span> {comp.subdivision || 'N/A'}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
 
-                                                    {/* 🏷 Price & Market Context */}
-                                                    <div className={`p-4 rounded-md ${comp.isActive ? 'bg-green-50' : 'bg-blue-50'}`}>
-                                                        <h4 className={`font-semibold mb-2 ${comp.isActive ? 'text-green-800' : 'text-blue-800'}`}>
-                                                            🏷 Price & Market
-                                                        </h4>
-                                                        <div className="space-y-1 text-sm">
-                                                            {comp.isActive ? (
-                                                                <>
-                                                                    <p><span className="font-medium">List Price:</span> <span className="text-green-600 font-bold">${comp.listPrice?.toLocaleString()}</span></p>
-                                                                    <p><span className="font-medium">Days on Market:</span> {comp.dom || 'New'}</p>
-                                                                    <p><span className="font-medium">Listed:</span> {comp.onMarketDate}</p>
-                                                                </>
-                                                            ) : (
-                                                                <>
-                                                                    <p><span className="font-medium">Sold Price:</span> <span className="text-blue-600 font-bold">${comp.soldPrice?.toLocaleString()}</span></p>
-                                                                    {comp.listPrice && <p><span className="font-medium">List Price:</span> ${comp.listPrice?.toLocaleString()}</p>}
-                                                                    <p><span className="font-medium">Sale Date:</span> {comp.closeDate}</p>
-                                                                </>
-                                                            )}
-                                                            <p><span className="font-medium">Price/Sq Ft:</span> <span className="font-semibold">${pricePerSqft}</span></p>
-                                                        </div>
+                                            {/* Right: Condition & Features */}
+                                            <div className="space-y-4">
+                                                {/* 🛠 Condition & Features */}
+                                                <div className="bg-orange-50 p-4 rounded-md">
+                                                    <h4 className="font-semibold text-orange-800 mb-2">🛠 Condition & Features</h4>
+                                                    <div className="space-y-1 text-sm">
+                                                        <p><span className="font-medium">Condition:</span>
+                                                            <span className={`font-semibold ml-1 ${getConditionColor(comp.condition)}`}>
+                                                                {comp.condition || 'Average'}
+                                                            </span>
+                                                        </p>
+                                                        <p><span className="font-medium">Style:</span> {comp.propertyType || 'N/A'}</p>
+                                                        <p><span className="font-medium">Stories:</span> {comp.stories || 'N/A'}</p>
+                                                        <p><span className="font-medium">Pool:</span> {comp.pool ? 'Yes' : 'No'}</p>
+                                                        <p><span className="font-medium">Deck/Patio:</span> {comp.deck ? 'Yes' : 'No'}</p>
+                                                        <p><span className="font-medium">Updates:</span> {comp.updates || 'Standard'}</p>
                                                     </div>
                                                 </div>
 
-                                                {/* Property Specs Only */}
-                                                <div className="space-y-4">
-                                                    {/* 🏠 Property Specs */}
-                                                    <div className="bg-indigo-50 p-4 rounded-md">
-                                                        <h4 className="font-semibold text-indigo-800 mb-2">🏠 Property Specs</h4>
-                                                        <div className="space-y-1 text-sm">
-                                                            <p><span className="font-medium">Living Area:</span> <span className="font-semibold">{comp.sqft?.toLocaleString()}</span> sq ft</p>
-                                                            <p><span className="font-medium">Basement:</span> {comp.basementSqft ? `${comp.basementSqft.toLocaleString()} sq ft` : 'None'}</p>
-                                                            <p><span className="font-medium">Lot Size:</span> {comp.lotSizeAcres ? `${comp.lotSizeAcres} acres` : 'N/A'}</p>
-                                                            <p><span className="font-medium">Bed/Bath:</span> {comp.beds} bed, {comp.baths} bath</p>
-                                                            <p><span className="font-medium">Garage:</span> {comp.garage} spaces</p>
-                                                            <p><span className="font-medium">Year Built:</span> {comp.yearBuilt}</p>
-                                                            <p><span className="font-medium">Style:</span> {comp.style || 'N/A'}</p>
-                                                            <p><span className="font-medium">Subdivision:</span> {comp.subdivision || 'N/A'}</p>
+                                                {/* Enhanced Compatibility Score */}
+                                                <div className="bg-gray-50 p-4 rounded-md border-2 border-dashed border-gray-300">
+                                                    <h4 className="font-semibold text-gray-800 mb-2">🎯 Compatibility</h4>
+                                                    <div className="space-y-2 text-xs">
+                                                        <div className="flex justify-between">
+                                                            <span>Size Match:</span>
+                                                            {(() => {
+                                                                const subjectSqft = subjectProperty.sqft || subjectProperty.aboveGradeSqft || 0;
+                                                                const compSqft = comp.sqft || 0;
+                                                                if (subjectSqft && compSqft) {
+                                                                    const diff = Math.abs(compSqft - subjectSqft);
+                                                                    const isGoodMatch = diff <= 200;
+                                                                    const isOkMatch = diff <= 500;
+                                                                    return (
+                                                                        <span className={`font-semibold ${isGoodMatch ? 'text-green-600' : isOkMatch ? 'text-yellow-600' : 'text-gray-600'}`}>
+                                                                            ±{diff} sq ft
+                                                                        </span>
+                                                                    );
+                                                                } else {
+                                                                    return <span className="text-gray-500">No data</span>;
+                                                                }
+                                                            })()}
                                                         </div>
-                                                    </div>
-                                                </div>
-
-                                                {/* Right: Condition & Features */}
-                                                <div className="space-y-4">
-                                                    {/* 🛠 Condition & Features */}
-                                                    <div className="bg-orange-50 p-4 rounded-md">
-                                                        <h4 className="font-semibold text-orange-800 mb-2">🛠 Condition & Features</h4>
-                                                        <div className="space-y-1 text-sm">
-                                                            <p><span className="font-medium">Condition:</span>
-                                                                <span className={`font-semibold ml-1 ${getConditionColor(comp.condition)}`}>
-                                                                    {comp.condition || 'Average'}
-                                                                </span>
-                                                            </p>
-                                                            <p><span className="font-medium">Style:</span> {comp.propertyType || 'N/A'}</p>
-                                                            <p><span className="font-medium">Stories:</span> {comp.stories || 'N/A'}</p>
-                                                            <p><span className="font-medium">Pool:</span> {comp.pool ? 'Yes' : 'No'}</p>
-                                                            <p><span className="font-medium">Deck/Patio:</span> {comp.deck ? 'Yes' : 'No'}</p>
-                                                            <p><span className="font-medium">Updates:</span> {comp.updates || 'Standard'}</p>
+                                                        <div className="flex justify-between">
+                                                            <span>Age Match:</span>
+                                                            {(() => {
+                                                                const subjectYear = subjectProperty.yearBuilt || 0;
+                                                                const compYear = comp.yearBuilt || 0;
+                                                                if (subjectYear && compYear) {
+                                                                    const diff = Math.abs(compYear - subjectYear);
+                                                                    const isGoodMatch = diff <= 2;
+                                                                    const isOkMatch = diff <= 5;
+                                                                    return (
+                                                                        <span className={`font-semibold ${isGoodMatch ? 'text-green-600' : isOkMatch ? 'text-yellow-600' : 'text-gray-600'}`}>
+                                                                            ±{diff} years
+                                                                        </span>
+                                                                    );
+                                                                } else {
+                                                                    return <span className="text-gray-500">No data</span>;
+                                                                }
+                                                            })()}
                                                         </div>
-                                                    </div>
-
-                                                    {/* Enhanced Compatibility Score */}
-                                                    <div className="bg-gray-50 p-4 rounded-md border-2 border-dashed border-gray-300">
-                                                        <h4 className="font-semibold text-gray-800 mb-2">🎯 Compatibility</h4>
-                                                        <div className="space-y-2 text-xs">
-                                                            <div className="flex justify-between">
-                                                                <span>Size Match:</span>
-                                                                {(() => {
-                                                                    const subjectSqft = subjectProperty.sqft || subjectProperty.aboveGradeSqft || 0;
-                                                                    const compSqft = comp.sqft || 0;
-                                                                    if (subjectSqft && compSqft) {
-                                                                        const diff = Math.abs(compSqft - subjectSqft);
-                                                                        const isGoodMatch = diff <= 200;
-                                                                        const isOkMatch = diff <= 500;
-                                                                        return (
-                                                                            <span className={`font-semibold ${isGoodMatch ? 'text-green-600' : isOkMatch ? 'text-yellow-600' : 'text-gray-600'}`}>
-                                                                                ±{diff} sq ft
-                                                                            </span>
-                                                                        );
-                                                                    } else {
-                                                                        return <span className="text-gray-500">No data</span>;
+                                                        <div className="flex justify-between">
+                                                            <span>Distance:</span>
+                                                            {(() => {
+                                                                if (comp.distance_miles !== undefined && comp.distance_miles !== null) {
+                                                                    if (comp.distance_miles === 0) {
+                                                                        return <span className="text-blue-600 font-semibold">Subject</span>;
                                                                     }
-                                                                })()}
-                                                            </div>
-                                                            <div className="flex justify-between">
-                                                                <span>Age Match:</span>
-                                                                {(() => {
-                                                                    const subjectYear = subjectProperty.yearBuilt || 0;
-                                                                    const compYear = comp.yearBuilt || 0;
-                                                                    if (subjectYear && compYear) {
-                                                                        const diff = Math.abs(compYear - subjectYear);
-                                                                        const isGoodMatch = diff <= 2;
-                                                                        const isOkMatch = diff <= 5;
-                                                                        return (
-                                                                            <span className={`font-semibold ${isGoodMatch ? 'text-green-600' : isOkMatch ? 'text-yellow-600' : 'text-gray-600'}`}>
-                                                                                ±{diff} years
-                                                                            </span>
-                                                                        );
-                                                                    } else {
-                                                                        return <span className="text-gray-500">No data</span>;
-                                                                    }
-                                                                })()}
-                                                            </div>
-                                                            <div className="flex justify-between">
-                                                                <span>Distance:</span>
-                                                                {(() => {
-                                                                    if (comp.distance_miles !== undefined && comp.distance_miles !== null) {
-                                                                        if (comp.distance_miles === 0) {
-                                                                            return <span className="text-blue-600 font-semibold">Subject</span>;
-                                                                        }
-                                                                        const isNear = comp.distance_miles <= 0.5;
-                                                                        const isClose = comp.distance_miles <= 1.0;
-                                                                        const isReasonable = comp.distance_miles <= 2.0;
-                                                                        return (
-                                                                            <span className={`font-semibold ${isNear ? 'text-green-600' : isClose ? 'text-blue-600' : isReasonable ? 'text-yellow-600' : 'text-gray-600'}`}>
-                                                                                {comp.distance_miles.toFixed(2)} mi
-                                                                            </span>
-                                                                        );
-                                                                    } else {
-                                                                        return <span className="text-gray-500">No location data</span>;
-                                                                    }
-                                                                })()}
-                                                            </div>
+                                                                    const isNear = comp.distance_miles <= 0.5;
+                                                                    const isClose = comp.distance_miles <= 1.0;
+                                                                    const isReasonable = comp.distance_miles <= 2.0;
+                                                                    return (
+                                                                        <span className={`font-semibold ${isNear ? 'text-green-600' : isClose ? 'text-blue-600' : isReasonable ? 'text-yellow-600' : 'text-gray-600'}`}>
+                                                                            {comp.distance_miles.toFixed(2)} mi
+                                                                        </span>
+                                                                    );
+                                                                } else {
+                                                                    return <span className="text-gray-500">No location data</span>;
+                                                                }
+                                                            })()}
                                                         </div>
                                                     </div>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
-                                );
-                            })}
-                            {viewMode === 'compact' && displayedComps.length < sortedAndFilteredComps.length && (
-                                <div className="mt-4 flex justify-center">
-                                    <button
-                                        onClick={() => setVisibleCount(c => c + 60)}
-                                        className="px-6 py-3 text-sm font-semibold rounded-lg bg-gradient-to-r from-sky-600 to-blue-600 text-white shadow hover:from-sky-700 hover:to-blue-700"
-                                    >Load More ({sortedAndFilteredComps.length - displayedComps.length} more)</button>
                                 </div>
-                            )}
-                        </div>
-                    )}
+                            );
+                        })
+                    }
+                    {
+                        viewMode === 'compact' && displayedComps.length < sortedAndFilteredComps.length && (
+                            <div className="mt-4 flex justify-center">
+                                <button
+                                    onClick={() => setVisibleCount(c => c + 60)}
+                                    className="px-6 py-3 text-sm font-semibold rounded-lg bg-gradient-to-r from-sky-600 to-blue-600 text-white shadow hover:from-sky-700 hover:to-blue-700"
+                                >Load More ({sortedAndFilteredComps.length - displayedComps.length} more)</button>
+                            </div>
+                        )
+                    }
 
-                    {(!loading && sortedAndFilteredComps.length === 0) && (
-                        <div className="text-center py-12 bg-white rounded-lg shadow-md">
-                            <h3 className="text-xl font-semibold text-gray-700">No Matching Comps Found</h3>
-                            <p className="text-gray-500 mt-2">Try adjusting the filters or subject property details.</p>
-                        </div>
-                    )}
+                    {
+                        (!loading && sortedAndFilteredComps.length === 0) && (
+                            <div className="text-center py-12 bg-white rounded-lg shadow-md">
+                                <h3 className="text-xl font-semibold text-gray-700">No Matching Comps Found</h3>
+                                <p className="text-gray-500 mt-2">Try adjusting the filters or subject property details.</p>
+                            </div>
+                        )
+                    }
 
                     {/* Selected Comps Summary */}
-                    {selectedComps.length > 0 && (
-                        <div className="mt-8 bg-sky-50 border border-sky-200 rounded-lg p-6">
-                            <h3 className="text-lg font-semibold text-sky-800 mb-4">
-                                Selected Comparables ({selectedComps.length})
-                            </h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                {selectedComps.map(comp => {
-                                    const price = comp.soldPrice || comp.listPrice || 0;
-                                    const pricePerSqft = price && comp.sqft ? Math.round(price / comp.sqft) : 0;
-                                    return (
-                                        <div key={comp.id} className="bg-white p-3 rounded-md border border-sky-200">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <p className="font-medium text-gray-800 truncate flex-1">{comp.address}</p>
-                                                {comp.isActive ?
-                                                    <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">Active</span> :
-                                                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">Sold</span>
-                                                }
+                    {
+                        selectedComps.length > 0 && (
+                            <div className="mt-8 bg-sky-50 border border-sky-200 rounded-lg p-6">
+                                <h3 className="text-lg font-semibold text-sky-800 mb-4">
+                                    Selected Comparables ({selectedComps.length})
+                                </h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {selectedComps.map(comp => {
+                                        const price = comp.soldPrice || comp.listPrice || 0;
+                                        const pricePerSqft = price && comp.sqft ? Math.round(price / comp.sqft) : 0;
+                                        return (
+                                            <div key={comp.id} className="bg-white p-3 rounded-md border border-sky-200">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <p className="font-medium text-gray-800 truncate flex-1">{comp.address}</p>
+                                                    {comp.isActive ?
+                                                        <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">Active</span> :
+                                                        <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">Sold</span>
+                                                    }
+                                                </div>
+                                                <p className="text-sm text-gray-600">${price?.toLocaleString()} • {comp.sqft?.toLocaleString()} sq ft</p>
+                                                <p className="text-xs text-gray-500">{comp.distance_miles?.toFixed(2)} mi • ${pricePerSqft}/sq ft</p>
                                             </div>
-                                            <p className="text-sm text-gray-600">${price?.toLocaleString()} • {comp.sqft?.toLocaleString()} sq ft</p>
-                                            <p className="text-xs text-gray-500">{comp.distance_miles?.toFixed(2)} mi • ${pricePerSqft}/sq ft</p>
-                                        </div>
-                                    );
-                                })}
+                                        );
+                                    })}
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        )
+                    }
 
                     {/* Property Details Modal */}
-                    {showModal && (
-                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[2000] p-4">
-                            <div className="bg-white rounded-lg max-w-4xl max-h-[90vh] overflow-y-auto w-full">
-                                {/* Modal Header */}
-                                <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
-                                    <h2 className="text-xl font-bold text-gray-800">
-                                        🏠 Property Details - {modalProperty?.address}
-                                    </h2>
-                                    <button
-                                        onClick={() => setShowModal(false)}
-                                        className="text-gray-500 hover:text-gray-700 text-2xl"
-                                    >
-                                        ×
-                                    </button>
-                                </div>
+                    {
+                        showModal && (
+                            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[2000] p-4">
+                                <div className="bg-white rounded-lg max-w-4xl max-h-[90vh] overflow-y-auto w-full">
+                                    {/* Modal Header */}
+                                    <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
+                                        <h2 className="text-xl font-bold text-gray-800">
+                                            🏠 Property Details - {modalProperty?.address}
+                                        </h2>
+                                        <button
+                                            onClick={() => setShowModal(false)}
+                                            className="text-gray-500 hover:text-gray-700 text-2xl"
+                                        >
+                                            ×
+                                        </button>
+                                    </div>
 
-                                {/* Modal Content */}
-                                <div className="p-6">
-                                    {modalLoading ? (
-                                        <div className="text-center py-8">
-                                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600 mx-auto"></div>
-                                            <p className="mt-4 text-gray-600">Loading detailed property information...</p>
-                                        </div>
-                                    ) : modalDetails?.error ? (
-                                        <div className="text-center py-8">
-                                            <p className="text-red-600">❌ {modalDetails.error}</p>
-                                            <p className="text-sm text-gray-500 mt-2">Try again or check with your data provider</p>
-                                        </div>
-                                    ) : modalDetails ? (
-                                        <div className="space-y-6">
-                                            {/* Basic Info Grid */}
-                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                                {/* Property Details */}
-                                                <div className="bg-blue-50 p-4 rounded-lg">
-                                                    <h3 className="font-semibold text-blue-800 mb-3">🏠 Property Details</h3>
-                                                    <div className="space-y-2 text-sm">
-                                                        <p><span className="font-medium">Property Type:</span> {modalDetails.PropertyType || 'N/A'}</p>
-                                                        <p><span className="font-medium">Property Sub Type:</span> {modalDetails.PropertySubType || 'N/A'}</p>
-                                                        <p><span className="font-medium">Living Area:</span> {modalDetails.AboveGradeFinishedArea?.toLocaleString() || 'N/A'} sq ft</p>
-                                                        <p><span className="font-medium">Below Grade:</span> {modalDetails.BelowGradeFinishedArea?.toLocaleString() || 'N/A'} sq ft</p>
-                                                        <p><span className="font-medium">Total Area:</span> {modalDetails.TotalFinishedArea?.toLocaleString() || 'N/A'} sq ft</p>
-                                                        <p><span className="font-medium">Year Built:</span> {modalDetails.YearBuilt || 'N/A'}</p>
-                                                        <p><span className="font-medium">Stories:</span> {modalDetails.StoriesTotal || modalDetails.Stories || 'N/A'}</p>
+                                    {/* Modal Content */}
+                                    <div className="p-6">
+                                        {modalLoading ? (
+                                            <div className="text-center py-8">
+                                                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600 mx-auto"></div>
+                                                <p className="mt-4 text-gray-600">Loading detailed property information...</p>
+                                            </div>
+                                        ) : modalDetails?.error ? (
+                                            <div className="text-center py-8">
+                                                <p className="text-red-600">❌ {modalDetails.error}</p>
+                                                <p className="text-sm text-gray-500 mt-2">Try again or check with your data provider</p>
+                                            </div>
+                                        ) : modalDetails ? (
+                                            <div className="space-y-6">
+                                                {/* Basic Info Grid */}
+                                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                                    {/* Property Details */}
+                                                    <div className="bg-blue-50 p-4 rounded-lg">
+                                                        <h3 className="font-semibold text-blue-800 mb-3">🏠 Property Details</h3>
+                                                        <div className="space-y-2 text-sm">
+                                                            <p><span className="font-medium">Property Type:</span> {modalDetails.PropertyType || 'N/A'}</p>
+                                                            <p><span className="font-medium">Property Sub Type:</span> {modalDetails.PropertySubType || 'N/A'}</p>
+                                                            <p><span className="font-medium">Living Area:</span> {modalDetails.AboveGradeFinishedArea?.toLocaleString() || 'N/A'} sq ft</p>
+                                                            <p><span className="font-medium">Below Grade:</span> {modalDetails.BelowGradeFinishedArea?.toLocaleString() || 'N/A'} sq ft</p>
+                                                            <p><span className="font-medium">Total Area:</span> {modalDetails.TotalFinishedArea?.toLocaleString() || 'N/A'} sq ft</p>
+                                                            <p><span className="font-medium">Year Built:</span> {modalDetails.YearBuilt || 'N/A'}</p>
+                                                            <p><span className="font-medium">Stories:</span> {modalDetails.StoriesTotal || modalDetails.Stories || 'N/A'}</p>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Room Details */}
+                                                    <div className="bg-green-50 p-4 rounded-lg">
+                                                        <h3 className="font-semibold text-green-800 mb-3">🛏️ Room Details</h3>
+                                                        <div className="space-y-2 text-sm">
+                                                            <p><span className="font-medium">Bedrooms:</span> {modalDetails.BedroomsTotal || 'N/A'}</p>
+                                                            <p><span className="font-medium">Bathrooms:</span> {modalDetails.BathroomsTotalInteger || modalDetails.BathroomsTotal || 'N/A'}</p>
+                                                            <p><span className="font-medium">Full Baths:</span> {modalDetails.BathroomsFull || 'N/A'}</p>
+                                                            <p><span className="font-medium">Half Baths:</span> {modalDetails.BathroomsHalf || 'N/A'}</p>
+                                                            <p><span className="font-medium">Garage Spaces:</span> {modalDetails.GarageSpaces || 'N/A'}</p>
+                                                            <p><span className="font-medium">Parking Total:</span> {modalDetails.ParkingTotal || 'N/A'}</p>
+                                                            <p><span className="font-medium">Fireplaces:</span> {modalDetails.FireplacesTotal || 'N/A'}</p>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Lot & Location */}
+                                                    <div className="bg-purple-50 p-4 rounded-lg">
+                                                        <h3 className="font-semibold text-purple-800 mb-3">📍 Lot & Location</h3>
+                                                        <div className="space-y-2 text-sm">
+                                                            <p><span className="font-medium">Lot Size:</span> {modalDetails.LotSizeAcres || 'N/A'} acres</p>
+                                                            <p><span className="font-medium">Lot Sq Ft:</span> {modalDetails.LotSizeSquareFeet?.toLocaleString() || 'N/A'} sq ft</p>
+                                                            <p><span className="font-medium">County:</span> {modalDetails.CountyOrParish || 'N/A'}</p>
+                                                            <p><span className="font-medium">Subdivision:</span> {modalDetails.SubdivisionName || 'N/A'}</p>
+                                                            <p><span className="font-medium">Postal Code:</span> {modalDetails.PostalCode || 'N/A'}</p>
+                                                            <p><span className="font-medium">Latitude:</span> {modalDetails.Latitude || 'N/A'}</p>
+                                                            <p><span className="font-medium">Longitude:</span> {modalDetails.Longitude || 'N/A'}</p>
+                                                        </div>
                                                     </div>
                                                 </div>
 
-                                                {/* Room Details */}
-                                                <div className="bg-green-50 p-4 rounded-lg">
-                                                    <h3 className="font-semibold text-green-800 mb-3">🛏️ Room Details</h3>
-                                                    <div className="space-y-2 text-sm">
-                                                        <p><span className="font-medium">Bedrooms:</span> {modalDetails.BedroomsTotal || 'N/A'}</p>
-                                                        <p><span className="font-medium">Bathrooms:</span> {modalDetails.BathroomsTotalInteger || modalDetails.BathroomsTotal || 'N/A'}</p>
-                                                        <p><span className="font-medium">Full Baths:</span> {modalDetails.BathroomsFull || 'N/A'}</p>
-                                                        <p><span className="font-medium">Half Baths:</span> {modalDetails.BathroomsHalf || 'N/A'}</p>
-                                                        <p><span className="font-medium">Garage Spaces:</span> {modalDetails.GarageSpaces || 'N/A'}</p>
-                                                        <p><span className="font-medium">Parking Total:</span> {modalDetails.ParkingTotal || 'N/A'}</p>
-                                                        <p><span className="font-medium">Fireplaces:</span> {modalDetails.FireplacesTotal || 'N/A'}</p>
+                                                {/* Pricing & Market Info */}
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                    <div className="bg-yellow-50 p-4 rounded-lg">
+                                                        <h3 className="font-semibold text-yellow-800 mb-3">💰 Pricing & Market</h3>
+                                                        <div className="space-y-2 text-sm">
+                                                            <p><span className="font-medium">List Price:</span> ${modalDetails.ListPrice?.toLocaleString() || 'N/A'}</p>
+                                                            <p><span className="font-medium">Close Price:</span> ${modalDetails.ClosePrice?.toLocaleString() || 'N/A'}</p>
+                                                            <p><span className="font-medium">Price/Sq Ft:</span> ${modalDetails.ListPricePerSquareFoot || 'N/A'}</p>
+                                                            <p><span className="font-medium">Status:</span> {modalDetails.StandardStatus || 'N/A'}</p>
+                                                            <p><span className="font-medium">On Market Date:</span> {modalDetails.OnMarketDate || 'N/A'}</p>
+                                                            <p><span className="font-medium">Close Date:</span> {modalDetails.CloseDate || 'N/A'}</p>
+                                                            <p><span className="font-medium">Days on Market:</span> {modalDetails.DaysOnMarket || modalDetails.CumulativeDaysOnMarket || 'N/A'}</p>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="bg-orange-50 p-4 rounded-lg">
+                                                        <h3 className="font-semibold text-orange-800 mb-3">🔧 Features & Condition</h3>
+                                                        <div className="space-y-2 text-sm">
+                                                            <p><span className="font-medium">Architectural Style:</span> {Array.isArray(modalDetails.ArchitecturalStyle) ? modalDetails.ArchitecturalStyle.join(', ') : modalDetails.ArchitecturalStyle || 'N/A'}</p>
+                                                            <p><span className="font-medium">Property Condition:</span> {Array.isArray(modalDetails.PropertyCondition) ? modalDetails.PropertyCondition.join(', ') : modalDetails.PropertyCondition || 'N/A'}</p>
+                                                            <p><span className="font-medium">Construction:</span> {Array.isArray(modalDetails.ConstructionMaterials) ? modalDetails.ConstructionMaterials.join(', ') : modalDetails.ConstructionMaterials || 'N/A'}</p>
+                                                            <p><span className="font-medium">Foundation:</span> {Array.isArray(modalDetails.FoundationDetails) ? modalDetails.FoundationDetails.join(', ') : modalDetails.FoundationDetails || 'N/A'}</p>
+                                                            <p><span className="font-medium">Heating:</span> {Array.isArray(modalDetails.Heating) ? modalDetails.Heating.join(', ') : modalDetails.Heating || 'N/A'}</p>
+                                                            <p><span className="font-medium">Cooling:</span> {Array.isArray(modalDetails.Cooling) ? modalDetails.Cooling.join(', ') : modalDetails.Cooling || 'N/A'}</p>
+                                                        </div>
                                                     </div>
                                                 </div>
 
-                                                {/* Lot & Location */}
-                                                <div className="bg-purple-50 p-4 rounded-lg">
-                                                    <h3 className="font-semibold text-purple-800 mb-3">📍 Lot & Location</h3>
-                                                    <div className="space-y-2 text-sm">
-                                                        <p><span className="font-medium">Lot Size:</span> {modalDetails.LotSizeAcres || 'N/A'} acres</p>
-                                                        <p><span className="font-medium">Lot Sq Ft:</span> {modalDetails.LotSizeSquareFeet?.toLocaleString() || 'N/A'} sq ft</p>
-                                                        <p><span className="font-medium">County:</span> {modalDetails.CountyOrParish || 'N/A'}</p>
-                                                        <p><span className="font-medium">Subdivision:</span> {modalDetails.SubdivisionName || 'N/A'}</p>
-                                                        <p><span className="font-medium">Postal Code:</span> {modalDetails.PostalCode || 'N/A'}</p>
-                                                        <p><span className="font-medium">Latitude:</span> {modalDetails.Latitude || 'N/A'}</p>
-                                                        <p><span className="font-medium">Longitude:</span> {modalDetails.Longitude || 'N/A'}</p>
+                                                {/* Schools & Neighborhood */}
+                                                {(modalDetails.ElementarySchool || modalDetails.MiddleOrJuniorSchool || modalDetails.HighSchool) && (
+                                                    <div className="bg-indigo-50 p-4 rounded-lg">
+                                                        <h3 className="font-semibold text-indigo-800 mb-3">🎓 Schools</h3>
+                                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                                                            <p><span className="font-medium">Elementary:</span> {modalDetails.ElementarySchool || 'N/A'}</p>
+                                                            <p><span className="font-medium">Middle/Junior:</span> {modalDetails.MiddleOrJuniorSchool || 'N/A'}</p>
+                                                            <p><span className="font-medium">High School:</span> {modalDetails.HighSchool || 'N/A'}</p>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Utilities & Systems */}
+                                                <div className="bg-gray-50 p-4 rounded-lg">
+                                                    <h3 className="font-semibold text-gray-800 mb-3">⚡ Utilities & Systems</h3>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                                                        <div>
+                                                            <p><span className="font-medium">Electric:</span> {Array.isArray(modalDetails.Electric) ? modalDetails.Electric.join(', ') : modalDetails.Electric || 'N/A'}</p>
+                                                            <p><span className="font-medium">Water Source:</span> {Array.isArray(modalDetails.WaterSource) ? modalDetails.WaterSource.join(', ') : modalDetails.WaterSource || 'N/A'}</p>
+                                                            <p><span className="font-medium">Sewer:</span> {Array.isArray(modalDetails.Sewer) ? modalDetails.Sewer.join(', ') : modalDetails.Sewer || 'N/A'}</p>
+                                                        </div>
+                                                        <div>
+                                                            <p><span className="font-medium">Internet:</span> {Array.isArray(modalDetails.InternetTypes) ? modalDetails.InternetTypes.join(', ') : modalDetails.InternetTypes || 'N/A'}</p>
+                                                            <p><span className="font-medium">Phone:</span> {Array.isArray(modalDetails.PhoneTypes) ? modalDetails.PhoneTypes.join(', ') : modalDetails.PhoneTypes || 'N/A'}</p>
+                                                            <p><span className="font-medium">Cable TV:</span> {Array.isArray(modalDetails.CableTvYN) ? modalDetails.CableTvYN.join(', ') : modalDetails.CableTvYN || 'N/A'}</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* MLS Info */}
+                                                <div className="bg-red-50 p-4 rounded-lg">
+                                                    <h3 className="font-semibold text-red-800 mb-3">📋 MLS Information</h3>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                                                        <div>
+                                                            <p><span className="font-medium">MLS Number:</span> {modalDetails.ListingKey || modalDetails.MLSNumber || 'N/A'}</p>
+                                                            <p><span className="font-medium">Agent ID:</span> {modalDetails.ListAgentKey || 'N/A'}</p>
+                                                            <p><span className="font-medium">Office ID:</span> {modalDetails.ListOfficeKey || 'N/A'}</p>
+                                                        </div>
+                                                        <div>
+                                                            <p><span className="font-medium">Last Modified:</span> {modalDetails.ModificationTimestamp || 'N/A'}</p>
+                                                            <p><span className="font-medium">Property Status:</span> {modalDetails.PropertyStatus || 'N/A'}</p>
+                                                            <p><span className="font-medium">Possession:</span> {modalDetails.Possession || 'N/A'}</p>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>
-
-                                            {/* Pricing & Market Info */}
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                                <div className="bg-yellow-50 p-4 rounded-lg">
-                                                    <h3 className="font-semibold text-yellow-800 mb-3">💰 Pricing & Market</h3>
-                                                    <div className="space-y-2 text-sm">
-                                                        <p><span className="font-medium">List Price:</span> ${modalDetails.ListPrice?.toLocaleString() || 'N/A'}</p>
-                                                        <p><span className="font-medium">Close Price:</span> ${modalDetails.ClosePrice?.toLocaleString() || 'N/A'}</p>
-                                                        <p><span className="font-medium">Price/Sq Ft:</span> ${modalDetails.ListPricePerSquareFoot || 'N/A'}</p>
-                                                        <p><span className="font-medium">Status:</span> {modalDetails.StandardStatus || 'N/A'}</p>
-                                                        <p><span className="font-medium">On Market Date:</span> {modalDetails.OnMarketDate || 'N/A'}</p>
-                                                        <p><span className="font-medium">Close Date:</span> {modalDetails.CloseDate || 'N/A'}</p>
-                                                        <p><span className="font-medium">Days on Market:</span> {modalDetails.DaysOnMarket || modalDetails.CumulativeDaysOnMarket || 'N/A'}</p>
-                                                    </div>
-                                                </div>
-
-                                                <div className="bg-orange-50 p-4 rounded-lg">
-                                                    <h3 className="font-semibold text-orange-800 mb-3">🔧 Features & Condition</h3>
-                                                    <div className="space-y-2 text-sm">
-                                                        <p><span className="font-medium">Architectural Style:</span> {Array.isArray(modalDetails.ArchitecturalStyle) ? modalDetails.ArchitecturalStyle.join(', ') : modalDetails.ArchitecturalStyle || 'N/A'}</p>
-                                                        <p><span className="font-medium">Property Condition:</span> {Array.isArray(modalDetails.PropertyCondition) ? modalDetails.PropertyCondition.join(', ') : modalDetails.PropertyCondition || 'N/A'}</p>
-                                                        <p><span className="font-medium">Construction:</span> {Array.isArray(modalDetails.ConstructionMaterials) ? modalDetails.ConstructionMaterials.join(', ') : modalDetails.ConstructionMaterials || 'N/A'}</p>
-                                                        <p><span className="font-medium">Foundation:</span> {Array.isArray(modalDetails.FoundationDetails) ? modalDetails.FoundationDetails.join(', ') : modalDetails.FoundationDetails || 'N/A'}</p>
-                                                        <p><span className="font-medium">Heating:</span> {Array.isArray(modalDetails.Heating) ? modalDetails.Heating.join(', ') : modalDetails.Heating || 'N/A'}</p>
-                                                        <p><span className="font-medium">Cooling:</span> {Array.isArray(modalDetails.Cooling) ? modalDetails.Cooling.join(', ') : modalDetails.Cooling || 'N/A'}</p>
-                                                    </div>
-                                                </div>
+                                        ) : (
+                                            <div className="text-center py-8">
+                                                <p className="text-gray-600">Select a property to view detailed information</p>
                                             </div>
+                                        )}
+                                    </div>
 
-                                            {/* Schools & Neighborhood */}
-                                            {(modalDetails.ElementarySchool || modalDetails.MiddleOrJuniorSchool || modalDetails.HighSchool) && (
-                                                <div className="bg-indigo-50 p-4 rounded-lg">
-                                                    <h3 className="font-semibold text-indigo-800 mb-3">🎓 Schools</h3>
-                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                                                        <p><span className="font-medium">Elementary:</span> {modalDetails.ElementarySchool || 'N/A'}</p>
-                                                        <p><span className="font-medium">Middle/Junior:</span> {modalDetails.MiddleOrJuniorSchool || 'N/A'}</p>
-                                                        <p><span className="font-medium">High School:</span> {modalDetails.HighSchool || 'N/A'}</p>
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* Utilities & Systems */}
-                                            <div className="bg-gray-50 p-4 rounded-lg">
-                                                <h3 className="font-semibold text-gray-800 mb-3">⚡ Utilities & Systems</h3>
-                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                                                    <div>
-                                                        <p><span className="font-medium">Electric:</span> {Array.isArray(modalDetails.Electric) ? modalDetails.Electric.join(', ') : modalDetails.Electric || 'N/A'}</p>
-                                                        <p><span className="font-medium">Water Source:</span> {Array.isArray(modalDetails.WaterSource) ? modalDetails.WaterSource.join(', ') : modalDetails.WaterSource || 'N/A'}</p>
-                                                        <p><span className="font-medium">Sewer:</span> {Array.isArray(modalDetails.Sewer) ? modalDetails.Sewer.join(', ') : modalDetails.Sewer || 'N/A'}</p>
-                                                    </div>
-                                                    <div>
-                                                        <p><span className="font-medium">Internet:</span> {Array.isArray(modalDetails.InternetTypes) ? modalDetails.InternetTypes.join(', ') : modalDetails.InternetTypes || 'N/A'}</p>
-                                                        <p><span className="font-medium">Phone:</span> {Array.isArray(modalDetails.PhoneTypes) ? modalDetails.PhoneTypes.join(', ') : modalDetails.PhoneTypes || 'N/A'}</p>
-                                                        <p><span className="font-medium">Cable TV:</span> {Array.isArray(modalDetails.CableTvYN) ? modalDetails.CableTvYN.join(', ') : modalDetails.CableTvYN || 'N/A'}</p>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            {/* MLS Info */}
-                                            <div className="bg-red-50 p-4 rounded-lg">
-                                                <h3 className="font-semibold text-red-800 mb-3">📋 MLS Information</h3>
-                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                                                    <div>
-                                                        <p><span className="font-medium">MLS Number:</span> {modalDetails.ListingKey || modalDetails.MLSNumber || 'N/A'}</p>
-                                                        <p><span className="font-medium">Agent ID:</span> {modalDetails.ListAgentKey || 'N/A'}</p>
-                                                        <p><span className="font-medium">Office ID:</span> {modalDetails.ListOfficeKey || 'N/A'}</p>
-                                                    </div>
-                                                    <div>
-                                                        <p><span className="font-medium">Last Modified:</span> {modalDetails.ModificationTimestamp || 'N/A'}</p>
-                                                        <p><span className="font-medium">Property Status:</span> {modalDetails.PropertyStatus || 'N/A'}</p>
-                                                        <p><span className="font-medium">Possession:</span> {modalDetails.Possession || 'N/A'}</p>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <div className="text-center py-8">
-                                            <p className="text-gray-600">Select a property to view detailed information</p>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Modal Footer */}
-                                <div className="sticky bottom-0 bg-white border-t px-6 py-4 flex justify-end">
-                                    <button
-                                        onClick={() => setShowModal(false)}
-                                        className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
-                                    >
-                                        Close
-                                    </button>
+                                    {/* Modal Footer */}
+                                    <div className="sticky bottom-0 bg-white border-t px-6 py-4 flex justify-end">
+                                        <button
+                                            onClick={() => setShowModal(false)}
+                                            className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                                        >
+                                            Close
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    )}
+                        )
+                    }
                 </div>
             );
-        };
+        }; // end ComparablesStep
 
         const ReportStep = ({ subjectProperty, selectedComps, prevStep, startOver, propertyDetailsError, setPropertyDetailsError }) => {
             useEffect(() => {
@@ -1927,7 +2193,7 @@
                     });
                     if (!resp.ok) {
                         console.warn('Failed to fetch full subject details for export');
-                        setPropertyDetailsError('Property details not available for complete export.');
+                        setPropertyDetailsError('Full property data not available (API lookup failed).');
                         return null;
                     }
                     const data = await resp.json();
@@ -1936,7 +2202,7 @@
                     return data;
                 } catch (e) {
                     console.error('Error fetching subject details for export:', e);
-                    setPropertyDetailsError('Unable to retrieve complete property details.');
+                    setPropertyDetailsError('Full property data not available (network error).');
                     return null;
                 }
             };
@@ -2309,7 +2575,7 @@
                     </div>
                 </div>
             );
-        };
+        }; // end ReportStep
 
         const App = () => {
             const initialSubjectState = {
@@ -2336,10 +2602,28 @@
                 pricePerSqft: ''
             };
             const [step, setStep] = useState(1);
-            const [subjectProperty, setSubjectProperty] = useState(initialSubjectState);
-            const [selectedComps, setSelectedComps] = useState([]);
+            const [subjectProperty, setSubjectProperty] = useState(() => {
+                try { const saved = localStorage.getItem('cma_subject_v1'); return saved ? JSON.parse(saved) : initialSubjectState; } catch { return initialSubjectState; }
+            });
+            const [selectedComps, setSelectedComps] = useState(() => {
+                try { const saved = localStorage.getItem('cma_selected_comps_v1'); return saved ? JSON.parse(saved) : []; } catch { return []; }
+            });
             const [showExplorer, setShowExplorer] = useState(false);
             const [propertyDetailsError, setPropertyDetailsError] = useState('');
+
+            // Persist subject property
+            useEffect(() => {
+                try { localStorage.setItem('cma_subject_v1', JSON.stringify(subjectProperty)); } catch { }
+            }, [subjectProperty]);
+            // Persist selected comps
+            useEffect(() => {
+                try { localStorage.setItem('cma_selected_comps_v1', JSON.stringify(selectedComps)); } catch { }
+            }, [selectedComps]);
+
+            const handleStartOver = () => {
+                try { localStorage.removeItem('cma_subject_v1'); localStorage.removeItem('cma_selected_comps_v1'); } catch { }
+                setSubjectProperty(initialSubjectState); setSelectedComps([]); setStep(1);
+            };
 
             return (
                 <div className="min-h-screen bg-gradient-to-br from-sky-50 via-white to-blue-50">
@@ -2369,7 +2653,7 @@
                                     subjectProperty={subjectProperty}
                                     selectedComps={selectedComps}
                                     prevStep={() => setStep(2)}
-                                    startOver={() => { setSubjectProperty(initialSubjectState); setSelectedComps([]); setStep(1); }}
+                                    startOver={handleStartOver}
                                     propertyDetailsError={propertyDetailsError}
                                     setPropertyDetailsError={setPropertyDetailsError}
                                 />
@@ -2381,6 +2665,16 @@
         };
 
         ReactDOM.render(<App />, document.getElementById('root'));
+        // end script
+    </script>
+    <!-- Load modular utilities after main script so fallback stubs can be replaced -->
+    <script type="module">
+        import { fetchComps, ADJUSTMENT_VALUES, HOME_STYLES } from './utils/cmaApi.js';
+        window.CMA_UTILS = { fetchComps, ADJUSTMENT_VALUES, HOME_STYLES };
+    </script>
+    <script type="module">
+        import { loadSubject, saveSubject, loadSelectedComps, saveSelectedComps, clearAll } from './utils/persist.js';
+        window.CMA_PERSIST = { loadSubject, saveSubject, loadSelectedComps, saveSelectedComps, clearAll };
     </script>
 </body>
 

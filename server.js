@@ -140,6 +140,7 @@ app.get("/api/cma-comparables", async (req, res) => {
       "City",
       "ListPrice",
       "ClosePrice",
+      "LivingArea",
       "AboveGradeFinishedArea",
       "BelowGradeFinishedArea",
       "BedroomsTotal",
@@ -153,6 +154,8 @@ app.get("/api/cma-comparables", async (req, res) => {
       "ListingKey",
       "PropertyType",
       "PropertyCondition",
+      "ArchitecturalStyle",
+      "SubdivisionName",
       "Coordinates",
       "Latitude",
       "Longitude",
@@ -227,7 +230,7 @@ app.get("/api/cma-comparables", async (req, res) => {
 
     // Process and enhance the data
     const processProperty = (prop, isActive = false) => {
-      const sqftValue = prop.AboveGradeFinishedArea || 0;
+      const sqftValue = prop.LivingArea || prop.AboveGradeFinishedArea || 0;
       const price = isActive ? prop.ListPrice : prop.ClosePrice;
       const pricePerSqft =
         price && sqftValue ? Math.round(price / sqftValue) : 0;
@@ -265,6 +268,12 @@ app.get("/api/cma-comparables", async (req, res) => {
           prop.PropertyCondition.length > 0
             ? prop.PropertyCondition[0]
             : "Average",
+        style:
+          Array.isArray(prop.ArchitecturalStyle) &&
+          prop.ArchitecturalStyle.length > 0
+            ? prop.ArchitecturalStyle[0]
+            : "",
+        subdivision: prop.SubdivisionName || "",
         latitude: prop.Latitude,
         longitude: prop.Longitude,
         distance_miles,
@@ -1113,12 +1122,16 @@ app.post("/api/property-details-from-address", async (req, res) => {
   if (!address) return res.status(400).json({ error: "Missing address" });
 
   try {
-    // 1. Search for property by address
-    const searchUrl = `${paragonApiConfig.apiUrl}/${
-      paragonApiConfig.datasetId
-    }/Property?access_token=${
-      paragonApiConfig.serverToken
-    }&$filter=contains(tolower(UnparsedAddress),'${address.toLowerCase()}')&$select=ListingKey,UnparsedAddress,City,StandardStatus,Media`;
+    // Clean up the address for better matching
+    const cleanAddress = address.trim().toLowerCase().replace(/[,]/g, "");
+    console.log(
+      `Searching for property: "${address}" (cleaned: "${cleanAddress}")`
+    );
+
+    // 1. Search for property by address with more comprehensive filters
+    const searchUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Property?access_token=${paragonApiConfig.serverToken}&$filter=contains(tolower(UnparsedAddress),'${cleanAddress}')&$select=ListingKey,UnparsedAddress,City,StandardStatus,Media,PropertyType&$top=10`;
+
+    console.log("Search URL:", searchUrl);
     const searchResp = await fetch(searchUrl);
 
     if (!searchResp.ok) {
@@ -1134,16 +1147,52 @@ app.post("/api/property-details-from-address", async (req, res) => {
 
     const searchData = await searchResp.json();
     const results = searchData.value;
+    console.log(`Found ${results?.length || 0} potential matches`);
 
     if (!results || results.length === 0) {
       return res.status(404).json({ error: "No property found for address" });
     }
 
-    // 2. Get ListingKey of best match (first result)
-    const listingKey = results[0].ListingKey;
+    // 2. Find the best match - prefer exact matches first
+    let bestMatch = results[0]; // default to first result
 
-    // 3. Fetch full property details
-    const detailsUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Property('${listingKey}')?access_token=${paragonApiConfig.serverToken}`;
+    for (const result of results) {
+      if (result.UnparsedAddress) {
+        const resultAddress = result.UnparsedAddress.toLowerCase();
+        console.log(`Checking match: ${result.UnparsedAddress}`);
+
+        // Prefer exact matches without unit numbers
+        if (
+          resultAddress === `${cleanAddress}, gretna ne 68028` ||
+          resultAddress === `${cleanAddress} gretna ne 68028` ||
+          resultAddress === cleanAddress
+        ) {
+          bestMatch = result;
+          console.log(`Found exact match: ${result.UnparsedAddress}`);
+          break;
+        }
+
+        // Fallback to addresses that contain the search term but prefer without unit numbers
+        if (
+          resultAddress.includes(cleanAddress) &&
+          !resultAddress.includes("#")
+        ) {
+          bestMatch = result;
+          console.log(
+            `Found good match without unit: ${result.UnparsedAddress}`
+          );
+        }
+      }
+    }
+
+    console.log(
+      `Best match: ${bestMatch.UnparsedAddress} (${bestMatch.ListingKey})`
+    );
+
+    // 3. Fetch full property details using all available fields
+    const detailsUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Property('${bestMatch.ListingKey}')?access_token=${paragonApiConfig.serverToken}`;
+    console.log("Details URL:", detailsUrl);
+
     const detailsResp = await fetch(detailsUrl);
 
     if (!detailsResp.ok) {
@@ -1158,6 +1207,15 @@ app.post("/api/property-details-from-address", async (req, res) => {
     }
 
     const details = await detailsResp.json();
+    console.log("Retrieved property details for:", details.UnparsedAddress);
+    console.log("Living Area (LivingArea):", details.LivingArea);
+    console.log(
+      "Living Area (AboveGradeFinishedArea):",
+      details.AboveGradeFinishedArea
+    );
+    console.log("Subdivision:", details.SubdivisionName);
+    console.log("Style:", details.ArchitecturalStyle);
+
     return res.json(details);
   } catch (err) {
     console.error("Error fetching property details:", err.message);
