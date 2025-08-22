@@ -107,6 +107,13 @@ app.get("/api/cma-comparables", async (req, res) => {
     radius_miles = 2,
     sqft_delta = 700,
     months_back = 6,
+    year_built_range,
+    residential_area,
+    price_range,
+    lot_size,
+    waterfront,
+    new_construction,
+    same_subdivision,
   } = req.query;
 
   //console.log("Received CMA comparables request:", req.query);
@@ -131,6 +138,103 @@ app.get("/api/cma-comparables", async (req, res) => {
       const maxSqft = parseInt(sqft) + parseInt(sqft_delta);
       baseFilters.push(
         `AboveGradeFinishedArea ge ${minSqft} and AboveGradeFinishedArea le ${maxSqft}`
+      );
+    }
+
+    // Advanced filters
+
+    // Year built range filter
+    if (year_built_range && sqft) {
+      // Assuming we have a year built value to compare against
+      const yearBuilt = parseInt(year_built_range);
+      if (yearBuilt > 0) {
+        const minYear =
+          new Date().getFullYear() - yearBuilt - parseInt(year_built_range);
+        const maxYear =
+          new Date().getFullYear() - yearBuilt + parseInt(year_built_range);
+        baseFilters.push(`YearBuilt ge ${minYear} and YearBuilt le ${maxYear}`);
+      }
+    }
+
+    // Residential area / neighborhood filter
+    if (residential_area) {
+      baseFilters.push(
+        `(contains(tolower(SubdivisionName),'${residential_area.toLowerCase()}') or contains(tolower(UnparsedAddress),'${residential_area.toLowerCase()}'))`
+      );
+    }
+
+    // Price range filter
+    if (price_range && price_range !== "any") {
+      let priceFilter = "";
+      switch (price_range) {
+        case "under_200k":
+          priceFilter = "(ListPrice lt 200000 or ClosePrice lt 200000)";
+          break;
+        case "200k_300k":
+          priceFilter =
+            "((ListPrice ge 200000 and ListPrice lt 300000) or (ClosePrice ge 200000 and ClosePrice lt 300000))";
+          break;
+        case "300k_400k":
+          priceFilter =
+            "((ListPrice ge 300000 and ListPrice lt 400000) or (ClosePrice ge 300000 and ClosePrice lt 400000))";
+          break;
+        case "400k_500k":
+          priceFilter =
+            "((ListPrice ge 400000 and ListPrice lt 500000) or (ClosePrice ge 400000 and ClosePrice lt 500000))";
+          break;
+        case "500k_750k":
+          priceFilter =
+            "((ListPrice ge 500000 and ListPrice lt 750000) or (ClosePrice ge 500000 and ClosePrice lt 750000))";
+          break;
+        case "750k_1m":
+          priceFilter =
+            "((ListPrice ge 750000 and ListPrice lt 1000000) or (ClosePrice ge 750000 and ClosePrice lt 1000000))";
+          break;
+        case "over_1m":
+          priceFilter = "(ListPrice ge 1000000 or ClosePrice ge 1000000)";
+          break;
+      }
+      if (priceFilter) {
+        baseFilters.push(priceFilter);
+      }
+    }
+
+    // Lot size filter
+    if (lot_size && lot_size !== "any") {
+      let lotFilter = "";
+      switch (lot_size) {
+        case "under_quarter":
+          lotFilter = "LotSizeAcres lt 0.25";
+          break;
+        case "quarter_half":
+          lotFilter = "LotSizeAcres ge 0.25 and LotSizeAcres lt 0.5";
+          break;
+        case "half_one":
+          lotFilter = "LotSizeAcres ge 0.5 and LotSizeAcres lt 1.0";
+          break;
+        case "over_one":
+          lotFilter = "LotSizeAcres ge 1.0";
+          break;
+      }
+      if (lotFilter) {
+        baseFilters.push(lotFilter);
+      }
+    }
+
+    // Waterfront filter
+    if (waterfront === "true") {
+      baseFilters.push("WaterfrontYN eq true");
+    }
+
+    // New construction filter
+    if (new_construction === "true") {
+      baseFilters.push("NewConstructionYN eq true");
+    }
+
+    // Same subdivision filter
+    if (same_subdivision === "true" && residential_area) {
+      baseFilters.push(
+        `tolower(SubdivisionName) eq '${residential_area.toLowerCase()}'`
       );
     }
 
@@ -159,6 +263,12 @@ app.get("/api/cma-comparables", async (req, res) => {
       "Coordinates",
       "Latitude",
       "Longitude",
+      "LotSizeAcres",
+      "LotSizeSquareFeet",
+      "WaterfrontYN",
+      "NewConstructionYN",
+      "PostalCode",
+      "StateOrProvince",
     ].join(",");
 
     // Build Active Properties query
