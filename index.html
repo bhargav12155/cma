@@ -99,6 +99,17 @@
     <script type="text/babel">
         const { useState, useMemo, useEffect } = React;
 
+        // --- UTILITY FUNCTIONS ---
+        const formatCurrency = (value) => {
+            if (value === null || value === undefined || isNaN(value)) return '$0';
+            return `${value > 0 ? '+' : ''}${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)}`;
+        };
+
+        const formatPrice = (value) => {
+            if (value === null || value === undefined || isNaN(value)) return '$0';
+            return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
+        };
+
         // --- ENHANCED CMA FETCH - Gets both Active and Closed Comparables ---
         const fetchComps = async (city, sqft, yearBuilt, address, radiusMiles = 5, sqftDelta = 1200, monthsBack = 12, latitude = null, longitude = null, advancedOptions = {}) => {
             //console.log('Fetching CMA comparables:', { city, sqft, yearBuilt, address, radiusMiles, sqftDelta, monthsBack, latitude, longitude, advancedOptions });
@@ -1358,34 +1369,6 @@
                 }
             };
 
-            // Function to show property details modal
-            const showPropertyDetails = async (comp) => {
-                setModalProperty(comp);
-                setShowModal(true);
-                setModalLoading(true);
-                setModalDetails(null);
-
-                try {
-                    const response = await fetch('http://gbcma.us-east-2.elasticbeanstalk.com/api/property-details-from-address', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ address: comp.address })
-                    });
-
-                    if (response.ok) {
-                        const details = await response.json();
-                        setModalDetails(details);
-                    } else {
-                        setModalDetails({ error: 'Failed to fetch property details' });
-                    }
-                } catch (error) {
-                    console.error('Error fetching property details:', error);
-                    setModalDetails({ error: 'Network error fetching details' });
-                } finally {
-                    setModalLoading(false);
-                }
-            };
-
             return (
                 <div id="comparables-section" className="animate-fade-in relative lg:pr-[320px]">
                     {/* Desktop Cart Sidebar (Amazon style) */}
@@ -2244,16 +2227,6 @@
                 return validAdjustments.reduce((acc, adj) => acc + adj.adjustedPrice, 0) / validAdjustments.length;
             }, [adjustments]);
 
-            const formatCurrency = (value) => {
-                if (value === null || value === undefined || isNaN(value)) return '$0';
-                return `${value > 0 ? '+' : ''}${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)}`;
-            };
-
-            const formatPrice = (value) => {
-                if (value === null || value === undefined || isNaN(value)) return '$0';
-                return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
-            };
-
             const handlePrint = () => window.print();
 
             // --- EXPORT HELPERS ---
@@ -2749,6 +2722,49 @@
             const [propertyDetailsError, setPropertyDetailsError] = useState('');
             const [showParametersModal, setShowParametersModal] = useState(false);
 
+            // Global modal state for property details
+            const [showModal, setShowModal] = useState(false);
+            const [modalProperty, setModalProperty] = useState(null);
+            const [modalDetails, setModalDetails] = useState(null);
+            const [modalLoading, setModalLoading] = useState(false);
+
+            // Handle form changes for search parameters modal
+            const handleChange = (e) => {
+                const { name, value, type } = e.target;
+                setSubjectProperty(prev => ({
+                    ...prev,
+                    [name]: type === 'number' ? (value === '' ? '' : parseFloat(value)) : value
+                }));
+            };
+
+            // Global function to show property details modal
+            const showPropertyDetails = async (comp) => {
+                setModalProperty(comp);
+                setShowModal(true);
+                setModalLoading(true);
+                setModalDetails(null);
+
+                try {
+                    const response = await fetch('http://gbcma.us-east-2.elasticbeanstalk.com/api/property-details-from-address', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ address: comp.address })
+                    });
+
+                    if (response.ok) {
+                        const details = await response.json();
+                        setModalDetails(details);
+                    } else {
+                        setModalDetails({ error: 'Failed to fetch property details' });
+                    }
+                } catch (error) {
+                    console.error('Error fetching property details:', error);
+                    setModalDetails({ error: 'Network error occurred' });
+                } finally {
+                    setModalLoading(false);
+                }
+            };
+
             return (
                 <div className="min-h-screen bg-gradient-to-br from-sky-50 via-white to-blue-50">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
@@ -2766,12 +2782,14 @@
                             {step === 2 && (
                                 <ComparablesStep
                                     subjectProperty={subjectProperty}
+                                    setSubjectProperty={setSubjectProperty}
                                     selectedComps={selectedComps}
                                     setSelectedComps={setSelectedComps}
                                     prevStep={() => setStep(1)}
                                     nextStep={() => setStep(3)}
                                     showParametersModal={showParametersModal}
                                     setShowParametersModal={setShowParametersModal}
+                                    showPropertyDetails={showPropertyDetails}
                                 />
                             )}
                             {step === 3 && (
@@ -2782,6 +2800,7 @@
                                     startOver={() => { setSubjectProperty(initialSubjectState); setSelectedComps([]); setStep(1); }}
                                     propertyDetailsError={propertyDetailsError}
                                     setPropertyDetailsError={setPropertyDetailsError}
+                                    showPropertyDetails={showPropertyDetails}
                                 />
                             )}
                         </div>
@@ -2957,6 +2976,60 @@
                                             className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition-all duration-200"
                                         >
                                             Cancel
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Property Details Modal */}
+                        {showModal && (
+                            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[2000] p-4">
+                                <div className="bg-white rounded-lg max-w-4xl max-h-[90vh] overflow-y-auto w-full">
+                                    {/* Modal Header */}
+                                    <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
+                                        <h2 className="text-xl font-bold text-gray-800">
+                                            🏠 Property Details - {modalProperty?.address}
+                                        </h2>
+                                        <button
+                                            onClick={() => setShowModal(false)}
+                                            className="text-gray-500 hover:text-gray-700 text-2xl"
+                                        >
+                                            ×
+                                        </button>
+                                    </div>
+
+                                    {/* Modal Content */}
+                                    <div className="p-6">
+                                        {modalLoading ? (
+                                            <div className="text-center py-8">
+                                                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600 mx-auto"></div>
+                                                <p className="text-gray-600 mt-4">Loading property details...</p>
+                                            </div>
+                                        ) : modalDetails?.error ? (
+                                            <div className="text-center py-8">
+                                                <p className="text-red-600">{modalDetails.error}</p>
+                                            </div>
+                                        ) : modalDetails ? (
+                                            <div className="space-y-6">
+                                                <div className="text-center py-8">
+                                                    <p className="text-gray-600">Property details loaded successfully</p>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="text-center py-8">
+                                                <p className="text-gray-600">Select a property to view detailed information</p>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Modal Footer */}
+                                    <div className="sticky bottom-0 bg-white border-t px-6 py-4 flex justify-end">
+                                        <button
+                                            onClick={() => setShowModal(false)}
+                                            className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                                        >
+                                            Close
                                         </button>
                                     </div>
                                 </div>
