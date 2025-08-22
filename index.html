@@ -130,11 +130,11 @@
                 // Send multiple residential areas as comma-separated string
                 params.set('residential_area', advancedOptions.residentialAreas.join(','));
             }
-            if (advancedOptions.priceRange && advancedOptions.priceRange !== 'any') params.set('price_range', advancedOptions.priceRange);
-            if (advancedOptions.lotSize && advancedOptions.lotSize !== 'any') params.set('lot_size', advancedOptions.lotSize);
             if (advancedOptions.waterfront) params.set('waterfront', 'true');
             if (advancedOptions.newConstruction) params.set('new_construction', 'true');
             if (advancedOptions.sameSubdivision) params.set('same_subdivision', 'true');
+            if (advancedOptions.houseType) params.set('house_type', advancedOptions.houseType);
+            if (advancedOptions.subdivision) params.set('subdivision', advancedOptions.subdivision);
 
             const res = await fetch(`/api/cma-comparables?${params.toString()}`);
             //console.log('CMA API response status:', res.status);
@@ -896,65 +896,6 @@
                                         </button>
                                     </div>
                                 </div>
-                                <div className="space-y-2">
-                                    <label htmlFor="priceRange" className="text-sm font-semibold text-gray-800">💲 Price Range</label>
-                                    {(subjectProperty.soldPrice || subjectProperty.listPrice) && (
-                                        <div className="mb-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
-                                            <p className="text-xs text-blue-600 font-medium">
-                                                {subjectProperty.soldPrice ? (
-                                                    <>
-                                                        Last Transaction: <span className="font-bold">${subjectProperty.soldPrice.toLocaleString()}</span>
-                                                        {subjectProperty.closeDate && (
-                                                            <span className="text-blue-500 ml-1">
-                                                                ({new Date(subjectProperty.closeDate).getFullYear()})
-                                                            </span>
-                                                        )}
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        Current List Price: <span className="font-bold">${subjectProperty.listPrice.toLocaleString()}</span>
-                                                    </>
-                                                )}
-                                            </p>
-                                        </div>
-                                    )}
-                                    <div className="relative">
-                                        <select name="priceRange" id="priceRange" value={subjectProperty.priceRange} onChange={handleChange}
-                                            className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium">
-                                            <option value="any">Any Price Range</option>
-                                            <option value="under_200k">Under $200K</option>
-                                            <option value="200k_300k">$200K - $300K</option>
-                                            <option value="300k_400k">$300K - $400K</option>
-                                            <option value="400k_500k">$400K - $500K</option>
-                                            <option value="500k_750k">$500K - $750K</option>
-                                            <option value="750k_1m">$750K - $1M</option>
-                                            <option value="over_1m">Over $1M</option>
-                                        </select>
-                                        <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                                            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                            </svg>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="space-y-2">
-                                    <label htmlFor="lotSize" className="text-sm font-semibold text-gray-800">🏞️ Lot Size Preference</label>
-                                    <div className="relative">
-                                        <select name="lotSize" id="lotSize" value={subjectProperty.lotSize} onChange={handleChange}
-                                            className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium">
-                                            <option value="any">Any Lot Size</option>
-                                            <option value="under_quarter">Under 1/4 Acre</option>
-                                            <option value="quarter_half">1/4 - 1/2 Acre</option>
-                                            <option value="half_one">1/2 - 1 Acre</option>
-                                            <option value="over_one">Over 1 Acre</option>
-                                        </select>
-                                        <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                                            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                            </svg>
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
 
                             {/* Additional Options Row */}
@@ -1214,7 +1155,7 @@
             );
         };
 
-        const ComparablesStep = ({ subjectProperty, selectedComps, setSelectedComps, prevStep, nextStep, showParametersModal, setShowParametersModal }) => {
+        const ComparablesStep = ({ subjectProperty, setSubjectProperty, selectedComps, setSelectedComps, prevStep, nextStep, showParametersModal, setShowParametersModal, showPropertyDetails }) => {
             useEffect(() => {
                 //console.log('ComparablesStep mounted');
                 setTimeout(() => {
@@ -1253,11 +1194,11 @@
                 const advancedOptions = {
                     yearBuiltRange: subjectProperty.yearBuiltRange,
                     residentialAreas: subjectProperty.residentialAreas.filter(area => area.trim() !== ''), // Filter out empty areas
-                    priceRange: subjectProperty.priceRange,
-                    lotSize: subjectProperty.lotSize,
                     waterfront: subjectProperty.waterfront,
                     newConstruction: subjectProperty.newConstruction,
-                    sameSubdivision: subjectProperty.sameSubdivision
+                    sameSubdivision: subjectProperty.sameSubdivision,
+                    houseType: subjectProperty.houseType,
+                    subdivision: subjectProperty.subdivision
                 };
 
                 fetchComps(
@@ -2122,7 +2063,7 @@
             );
         };
 
-        const ReportStep = ({ subjectProperty, selectedComps, prevStep, startOver, propertyDetailsError, setPropertyDetailsError }) => {
+        const ReportStep = ({ subjectProperty, selectedComps, prevStep, startOver, propertyDetailsError, setPropertyDetailsError, showPropertyDetails }) => {
             useEffect(() => {
                 //console.log('ReportStep mounted');
                 //console.log('Subject Property:', subjectProperty);
@@ -2543,7 +2484,7 @@
                 <div className="animate-fade-in">
                     <div id="print-area" className="bg-white p-6 sm:p-8 rounded-lg shadow-lg">
                         <header className="border-b-2 border-gray-200 pb-4 mb-6"><div className="flex justify-between items-center"><div><h1 className="text-3xl font-bold text-sky-700">Simple CMA</h1><p className="text-gray-600">Comparative Market Analysis <span className="text-xs text-green-600">v2.0-format-fixed</span></p></div><div className="text-right"><p className="font-semibold">Omaha & Lincoln Real Estate</p><p className="text-sm text-gray-500">Generated: {new Date().toLocaleDateString()}</p></div></div></header>
-                        <section id="summary" className="mb-8"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Valuation Summary</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><h3 className="font-semibold text-gray-700">Subject Property</h3><p className="text-lg text-gray-900">{subjectProperty.address}</p><p className="text-gray-600">{subjectProperty.city}</p><p className="text-sm text-gray-500 mt-1">{subjectProperty.square_feet?.toLocaleString()} sq ft</p></div><div className="bg-sky-50 p-4 rounded-lg text-center"><h3 className="font-semibold text-sky-800">Estimated Market Value</h3><p className="text-4xl font-bold text-sky-700 tracking-tight mt-1">{formatPrice(finalValuation)}</p><p className="text-sm text-sky-600 mt-1">{subjectProperty.square_feet?.toLocaleString()} sq ft • ${(finalValuation / subjectProperty.square_feet).toFixed(0)}/sq ft</p><div className="flex justify-center gap-4 mt-2 text-sm"><span>Low: {formatPrice(finalValuation * 0.98)}</span><span>High: {formatPrice(finalValuation * 1.02)}</span></div></div></div></section>
+                        <section id="summary" className="mb-8"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Valuation Summary</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><h3 className="font-semibold text-gray-700">Subject Property</h3><p className="text-lg text-gray-900">{subjectProperty.address}</p><p className="text-gray-600">{subjectProperty.city}</p><p className="text-sm text-gray-500 mt-1">{subjectProperty.sqft?.toLocaleString()} sq ft</p></div><div className="bg-sky-50 p-4 rounded-lg text-center"><h3 className="font-semibold text-sky-800">Estimated Market Value</h3><p className="text-4xl font-bold text-sky-700 tracking-tight mt-1">{formatPrice(finalValuation)}</p><p className="text-sm text-sky-600 mt-1">{subjectProperty.sqft?.toLocaleString()} sq ft • ${subjectProperty.sqft && finalValuation ? (finalValuation / subjectProperty.sqft).toFixed(0) : 'N/A'}/sq ft</p><div className="flex justify-center gap-4 mt-2 text-sm"><span>Low: {formatPrice(finalValuation * 0.98)}</span><span>High: {formatPrice(finalValuation * 1.02)}</span></div></div></div></section>
 
                         <section id="ai-features" className="my-8 print-hidden">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -2700,8 +2641,6 @@
                 monthsBack: 12,
                 yearBuiltRange: 10,
                 residentialAreas: [''], // Array for multiple areas, start with one empty field
-                priceRange: 'any',
-                lotSize: 'any',
                 waterfront: false,
                 newConstruction: false,
                 sameSubdivision: false,
@@ -2713,7 +2652,9 @@
                 lotSizeSquareFeet: '',
                 stories: '',
                 dom: '',
-                pricePerSqft: ''
+                pricePerSqft: '',
+                houseType: '', // New field for house type/style filter
+                subdivision: '' // New field for subdivision filter
             };
             const [step, setStep] = useState(1);
             const [subjectProperty, setSubjectProperty] = useState(initialSubjectState);
@@ -2869,44 +2810,6 @@
                                             </div>
                                         </div>
 
-                                        {/* Price Range */}
-                                        <div className="space-y-2">
-                                            <label className="text-sm font-semibold text-gray-800">💲 Price Range</label>
-                                            {(subjectProperty.soldPrice || subjectProperty.listPrice) && (
-                                                <div className="mb-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
-                                                    <p className="text-xs text-blue-600 font-medium">
-                                                        {subjectProperty.soldPrice ? (
-                                                            <>
-                                                                Last Transaction: <span className="font-bold">${subjectProperty.soldPrice.toLocaleString()}</span>
-                                                                {subjectProperty.closeDate && (
-                                                                    <span className="text-blue-500 ml-1">
-                                                                        ({new Date(subjectProperty.closeDate).getFullYear()})
-                                                                    </span>
-                                                                )}
-                                                            </>
-                                                        ) : (
-                                                            <>
-                                                                Current List Price: <span className="font-bold">${subjectProperty.listPrice.toLocaleString()}</span>
-                                                            </>
-                                                        )}
-                                                    </p>
-                                                </div>
-                                            )}
-                                            <div className="relative">
-                                                <select name="priceRange" value={subjectProperty.priceRange} onChange={handleChange}
-                                                    className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium">
-                                                    <option value="any">Any Price Range</option>
-                                                    <option value="under_200k">Under $200K</option>
-                                                    <option value="200k_300k">$200K - $300K</option>
-                                                    <option value="300k_400k">$300K - $400K</option>
-                                                    <option value="400k_500k">$400K - $500K</option>
-                                                    <option value="500k_750k">$500K - $750K</option>
-                                                    <option value="750k_1m">$750K - $1M</option>
-                                                    <option value="over_1m">Over $1M</option>
-                                                </select>
-                                            </div>
-                                        </div>
-
                                         {/* Year Built Range */}
                                         <div className="space-y-2">
                                             <label className="text-sm font-semibold text-gray-800">🏗️ Year Built Range</label>
@@ -2920,6 +2823,45 @@
                                                     <option value="within_20">Within 20 years</option>
                                                 </select>
                                             </div>
+                                        </div>
+
+                                        {/* House Type Filter */}
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-semibold text-gray-800">🏘️ House Type/Style</label>
+                                            <div className="relative">
+                                                <select name="houseType" value={subjectProperty.houseType} onChange={handleChange}
+                                                    className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium">
+                                                    <option value="">All House Types</option>
+                                                    <option value="Ranch">Ranch</option>
+                                                    <option value="Traditional">Traditional</option>
+                                                    <option value="Contemporary">Contemporary</option>
+                                                    <option value="Tudor">Tudor</option>
+                                                    <option value="Other">Other</option>
+                                                    <option value="2 Story">2 Story</option>
+                                                    <option value="1.5 Story">1.5 Story</option>
+                                                    <option value="Multi-Level">Multi-Level</option>
+                                                    <option value="Split Entry">Split Entry</option>
+                                                    <option value="Raised Ranch">Raised Ranch</option>
+                                                    <option value="Tri-Level">Tri-Level</option>
+                                                    <option value="Resort">Resort</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        {/* Subdivision Filter */}
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-semibold text-gray-800">🏘️ Subdivision</label>
+                                            <div className="relative">
+                                                <input
+                                                    type="text"
+                                                    name="subdivision"
+                                                    value={subjectProperty.subdivision}
+                                                    onChange={handleChange}
+                                                    className="w-full pl-4 pr-4 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 font-medium"
+                                                    placeholder="e.g. Indian Creek, Blue Sage Creek, Vistancia"
+                                                />
+                                            </div>
+                                            <p className="text-xs text-gray-500">Enter subdivision name to filter properties (leave blank for all subdivisions)</p>
                                         </div>
 
                                         {/* Special Features Checkboxes */}
