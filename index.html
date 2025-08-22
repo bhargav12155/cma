@@ -133,8 +133,8 @@
             if (advancedOptions.waterfront) params.set('waterfront', 'true');
             if (advancedOptions.newConstruction) params.set('new_construction', 'true');
             if (advancedOptions.sameSubdivision) params.set('same_subdivision', 'true');
-            if (advancedOptions.houseType) params.set('house_type', advancedOptions.houseType);
-            if (advancedOptions.subdivision) params.set('subdivision', advancedOptions.subdivision);
+            if (advancedOptions.houseStyle) params.set('house_style', advancedOptions.houseStyle);
+            if (advancedOptions.subdivisionFilter) params.set('subdivision_filter', advancedOptions.subdivisionFilter);
 
             const res = await fetch(`/api/cma-comparables?${params.toString()}`);
             //console.log('CMA API response status:', res.status);
@@ -848,97 +848,91 @@
                                 Advanced Comparables
                             </h3>
                             <p className="text-sm text-gray-600 mb-4">
-                                Fine-tune your search with additional criteria to find the most relevant comparable properties for accurate market analysis.
+                                Filter comparable properties with these simple criteria.
                             </p>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+                            {/* Residential Areas - Simplified */}
+                            <div className="mb-6">
+                                <label className="text-sm font-semibold text-gray-800 mb-2 block">🏘️ Residential Areas/Neighborhoods</label>
                                 <div className="space-y-2">
-                                    <label className="text-sm font-semibold text-gray-800">🏘️ Residential Areas/Neighborhoods</label>
-                                    <div className="space-y-2">
-                                        {subjectProperty.residentialAreas.map((area, index) => (
-                                            <div key={index} className="flex gap-2">
-                                                <input
-                                                    type="text"
-                                                    value={area}
-                                                    onChange={(e) => {
-                                                        const newAreas = [...subjectProperty.residentialAreas];
-                                                        newAreas[index] = e.target.value;
+                                    {subjectProperty.residentialAreas.map((area, index) => (
+                                        <div key={index} className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                value={area}
+                                                onChange={(e) => {
+                                                    const newAreas = [...subjectProperty.residentialAreas];
+                                                    newAreas[index] = e.target.value;
+                                                    setSubjectProperty(prev => ({ ...prev, residentialAreas: newAreas }));
+                                                }}
+                                                className="flex-1 pl-4 pr-4 py-2 text-sm bg-white border border-gray-300 rounded-lg focus:border-sky-500 focus:ring-1 focus:ring-sky-200"
+                                                placeholder="e.g. West Omaha, Benson, etc."
+                                            />
+                                            {subjectProperty.residentialAreas.length > 1 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const newAreas = subjectProperty.residentialAreas.filter((_, i) => i !== index);
                                                         setSubjectProperty(prev => ({ ...prev, residentialAreas: newAreas }));
                                                     }}
-                                                    className="flex-1 pl-4 pr-4 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 font-medium"
-                                                    placeholder="e.g. West Omaha, Benson, etc."
-                                                />
-                                                {subjectProperty.residentialAreas.length > 1 && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            const newAreas = subjectProperty.residentialAreas.filter((_, i) => i !== index);
-                                                            setSubjectProperty(prev => ({ ...prev, residentialAreas: newAreas }));
-                                                        }}
-                                                        className="px-3 py-3 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors"
-                                                        title="Remove area"
-                                                    >
-                                                        ✕
-                                                    </button>
-                                                )}
-                                            </div>
-                                        ))}
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setSubjectProperty(prev => ({
-                                                    ...prev,
-                                                    residentialAreas: [...prev.residentialAreas, '']
-                                                }));
-                                            }}
-                                            className="w-full px-4 py-2 text-sm font-medium text-sky-600 bg-sky-50 border-2 border-dashed border-sky-200 rounded-lg hover:bg-sky-100 hover:border-sky-300 transition-colors"
-                                        >
-                                            + Add Another Area
-                                        </button>
-                                    </div>
+                                                    className="px-2 py-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
+                                                    title="Remove area"
+                                                >
+                                                    ✕
+                                                </button>
+                                            )}
+                                        </div>
+                                    ))}
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setSubjectProperty(prev => ({
+                                                ...prev,
+                                                residentialAreas: [...prev.residentialAreas, '']
+                                            }));
+                                        }}
+                                        className="text-sm text-sky-600 hover:text-sky-800"
+                                    >
+                                        + Add Another Area
+                                    </button>
                                 </div>
                             </div>
 
-                            {/* Additional Options Row */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
-                                <div className="space-y-2">
-                                    <label htmlFor="waterfront" className="flex items-center text-sm font-semibold text-gray-800">
-                                        <input
-                                            type="checkbox"
-                                            name="waterfront"
-                                            id="waterfront"
-                                            checked={subjectProperty.waterfront}
-                                            onChange={handleChange}
-                                            className="mr-2 h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
-                                        />
-                                        🌊 Waterfront Properties Only
-                                    </label>
-                                </div>
-                                <div className="space-y-2">
-                                    <label htmlFor="newConstruction" className="flex items-center text-sm font-semibold text-gray-800">
-                                        <input
-                                            type="checkbox"
-                                            name="newConstruction"
-                                            id="newConstruction"
-                                            checked={subjectProperty.newConstruction}
-                                            onChange={handleChange}
-                                            className="mr-2 h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
-                                        />
-                                        🔨 New Construction Only
-                                    </label>
-                                </div>
-                                <div className="space-y-2">
-                                    <label htmlFor="sameSubdivision" className="flex items-center text-sm font-semibold text-gray-800">
-                                        <input
-                                            type="checkbox"
-                                            name="sameSubdivision"
-                                            id="sameSubdivision"
-                                            checked={subjectProperty.sameSubdivision}
-                                            onChange={handleChange}
-                                            className="mr-2 h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
-                                        />
-                                        🏘️ Same Subdivision Only
-                                    </label>
-                                </div>
+                            {/* Simple Checkboxes */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <label htmlFor="waterfront" className="flex items-center text-sm text-gray-800">
+                                    <input
+                                        type="checkbox"
+                                        name="waterfront"
+                                        id="waterfront"
+                                        checked={subjectProperty.waterfront}
+                                        onChange={handleChange}
+                                        className="mr-2 h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
+                                    />
+                                    🌊 Waterfront Properties Only
+                                </label>
+                                <label htmlFor="newConstruction" className="flex items-center text-sm text-gray-800">
+                                    <input
+                                        type="checkbox"
+                                        name="newConstruction"
+                                        id="newConstruction"
+                                        checked={subjectProperty.newConstruction}
+                                        onChange={handleChange}
+                                        className="mr-2 h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
+                                    />
+                                    🔨 New Construction Only
+                                </label>
+                                <label htmlFor="sameSubdivision" className="flex items-center text-sm text-gray-800">
+                                    <input
+                                        type="checkbox"
+                                        name="sameSubdivision"
+                                        id="sameSubdivision"
+                                        checked={subjectProperty.sameSubdivision}
+                                        onChange={handleChange}
+                                        className="mr-2 h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
+                                    />
+                                    🏘️ Same Subdivision Only
+                                </label>
                             </div>
                         </div>
 
@@ -1197,8 +1191,8 @@
                     waterfront: subjectProperty.waterfront,
                     newConstruction: subjectProperty.newConstruction,
                     sameSubdivision: subjectProperty.sameSubdivision,
-                    houseType: subjectProperty.houseType,
-                    subdivision: subjectProperty.subdivision
+                    houseStyle: subjectProperty.houseStyle,
+                    subdivisionFilter: subjectProperty.subdivisionFilter
                 };
 
                 fetchComps(
@@ -2640,6 +2634,8 @@
                 sqftDelta: 1200,
                 monthsBack: 12,
                 yearBuiltRange: 10,
+                houseStyle: '', // Added for house type/style filter
+                subdivisionFilter: '', // Added for subdivision filter
                 residentialAreas: [''], // Array for multiple areas, start with one empty field
                 waterfront: false,
                 newConstruction: false,
@@ -2652,9 +2648,7 @@
                 lotSizeSquareFeet: '',
                 stories: '',
                 dom: '',
-                pricePerSqft: '',
-                houseType: '', // New field for house type/style filter
-                subdivision: '' // New field for subdivision filter
+                pricePerSqft: ''
             };
             const [step, setStep] = useState(1);
             const [subjectProperty, setSubjectProperty] = useState(initialSubjectState);
@@ -2825,43 +2819,42 @@
                                             </div>
                                         </div>
 
-                                        {/* House Type Filter */}
+                                        {/* House Type/Style */}
                                         <div className="space-y-2">
                                             <label className="text-sm font-semibold text-gray-800">🏘️ House Type/Style</label>
                                             <div className="relative">
-                                                <select name="houseType" value={subjectProperty.houseType} onChange={handleChange}
+                                                <select name="houseStyle" value={subjectProperty.houseStyle || ''} onChange={handleChange}
                                                     className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium">
-                                                    <option value="">All House Types</option>
+                                                    <option value="">All Styles</option>
                                                     <option value="Ranch">Ranch</option>
                                                     <option value="Traditional">Traditional</option>
                                                     <option value="Contemporary">Contemporary</option>
+                                                    <option value="Colonial">Colonial</option>
                                                     <option value="Tudor">Tudor</option>
+                                                    <option value="Craftsman">Craftsman</option>
+                                                    <option value="Victorian">Victorian</option>
+                                                    <option value="Modern">Modern</option>
+                                                    <option value="Mediterranean">Mediterranean</option>
+                                                    <option value="Cape Cod">Cape Cod</option>
+                                                    <option value="Split Level">Split Level</option>
                                                     <option value="Other">Other</option>
-                                                    <option value="2 Story">2 Story</option>
-                                                    <option value="1.5 Story">1.5 Story</option>
-                                                    <option value="Multi-Level">Multi-Level</option>
-                                                    <option value="Split Entry">Split Entry</option>
-                                                    <option value="Raised Ranch">Raised Ranch</option>
-                                                    <option value="Tri-Level">Tri-Level</option>
-                                                    <option value="Resort">Resort</option>
                                                 </select>
                                             </div>
                                         </div>
 
-                                        {/* Subdivision Filter */}
+                                        {/* Subdivision */}
                                         <div className="space-y-2">
-                                            <label className="text-sm font-semibold text-gray-800">🏘️ Subdivision</label>
+                                            <label className="text-sm font-semibold text-gray-800">🏡 Subdivision</label>
                                             <div className="relative">
                                                 <input
                                                     type="text"
-                                                    name="subdivision"
-                                                    value={subjectProperty.subdivision}
+                                                    name="subdivisionFilter"
+                                                    placeholder="Enter subdivision name (optional)"
+                                                    value={subjectProperty.subdivisionFilter || ''}
                                                     onChange={handleChange}
                                                     className="w-full pl-4 pr-4 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 font-medium"
-                                                    placeholder="e.g. Indian Creek, Blue Sage Creek, Vistancia"
                                                 />
                                             </div>
-                                            <p className="text-xs text-gray-500">Enter subdivision name to filter properties (leave blank for all subdivisions)</p>
                                         </div>
 
                                         {/* Special Features Checkboxes */}
