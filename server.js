@@ -104,9 +104,9 @@ app.get("/api/cma-comparables", async (req, res) => {
     sqft,
     latitude,
     longitude,
-    radius_miles = 2,
-    sqft_delta = 700,
-    months_back = 6,
+    radius_miles = 5,
+    sqft_delta = 1200,
+    months_back = 12,
     year_built_range,
     residential_area,
     price_range,
@@ -156,11 +156,20 @@ app.get("/api/cma-comparables", async (req, res) => {
       }
     }
 
-    // Residential area / neighborhood filter
+    // Residential area / neighborhood filter - now supports multiple areas
     if (residential_area) {
-      baseFilters.push(
-        `(contains(tolower(SubdivisionName),'${residential_area.toLowerCase()}') or contains(tolower(UnparsedAddress),'${residential_area.toLowerCase()}'))`
-      );
+      const areas = residential_area
+        .split(",")
+        .map((area) => area.trim())
+        .filter((area) => area);
+      if (areas.length > 0) {
+        const areaFilters = areas.map(
+          (area) =>
+            `(contains(tolower(SubdivisionName),'${area.toLowerCase()}') or contains(tolower(UnparsedAddress),'${area.toLowerCase()}'))`
+        );
+        // Use OR logic to match any of the specified areas
+        baseFilters.push(`(${areaFilters.join(" or ")})`);
+      }
     }
 
     // Price range filter
@@ -280,7 +289,7 @@ app.get("/api/cma-comparables", async (req, res) => {
       `$filter=${encodeURIComponent(activeFilterString)}&` +
       `$select=${encodeURIComponent(selectFields)}&` +
       `$orderby=ListPrice asc&` +
-      `$top=50`;
+      `$top=150`;
 
     // Build Closed Properties query
     const closedFilters = [
@@ -295,7 +304,7 @@ app.get("/api/cma-comparables", async (req, res) => {
       `$filter=${encodeURIComponent(closedFilterString)}&` +
       `$select=${encodeURIComponent(selectFields)}&` +
       `$orderby=CloseDate desc&` +
-      `$top=50`;
+      `$top=150`;
 
     //console.log("Active Properties Query:", activeUrl);
     //console.log("Closed Properties Query:", closedUrl);
