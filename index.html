@@ -2619,6 +2619,79 @@
         };
 
         const App = () => {
+            // --- LOCATION API CALL ON APP LOAD ---
+            useEffect(() => {
+                // Helper to get device info
+                function getDeviceInfo() {
+                    return {
+                        userAgent: navigator.userAgent || '',
+                        platform: navigator.platform || '',
+                        language: navigator.language || '',
+                        languages: navigator.languages || [],
+                        screen: {
+                            width: screen?.width || '',
+                            height: screen?.height || '',
+                            availWidth: screen?.availWidth || '',
+                            availHeight: screen?.availHeight || '',
+                            colorDepth: screen?.colorDepth || '',
+                            pixelDepth: screen?.pixelDepth || ''
+                        },
+                        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+                        online: navigator.onLine || false,
+                        cookiesEnabled: navigator.cookieEnabled || false,
+                        javaEnabled: false, // Java is not available in modern browsers
+                        hardwareConcurrency: navigator.hardwareConcurrency || '',
+                        deviceMemory: navigator.deviceMemory || '',
+                        touchSupport: 'ontouchstart' in window || navigator.maxTouchPoints > 0
+                    };
+                }
+
+                // Helper to get location info
+                function getLocationInfo(cb) {
+                    if (navigator.geolocation) {
+                        navigator.geolocation.getCurrentPosition(
+                            pos => {
+                                cb({
+                                    lat: pos.coords.latitude,
+                                    lng: pos.coords.longitude,
+                                    accuracy: pos.coords.accuracy || 0
+                                });
+                            },
+                            () => {
+                                cb({ lat: '', lng: '', accuracy: 0 });
+                            }
+                        );
+                    } else {
+                        cb({ lat: '', lng: '', accuracy: 0 });
+                    }
+                }
+
+                // Send location data after location is resolved
+                getLocationInfo((locationInfo) => {
+                    const locationPayload = {
+                        userId: 'anonymous',
+                        lat: locationInfo.lat,
+                        lng: locationInfo.lng,
+                        accuracy: locationInfo.accuracy,
+                        timestamp: new Date().toISOString(),
+                        device: getDeviceInfo(),
+                        appName: document.title || 'Simple CMA'
+                    };
+
+                    fetch('http://localhost:3000/api/location', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'User-Agent': navigator.userAgent || '',
+                            'Referer': window.location.href || '',
+                            'sec-ch-ua-platform': `"${navigator.platform}"` || '',
+                            'sec-ch-ua-mobile': '?0'
+                        },
+                        body: JSON.stringify(locationPayload)
+                    }).catch(() => { });
+                });
+            }, []);
+
             const initialSubjectState = {
                 address: '',
                 city: '',
