@@ -4,7 +4,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simple CMA</title>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Simple CMA v2.0 - Format Fix</title>
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- React Libraries -->
@@ -96,9 +99,20 @@
     <script type="text/babel">
         const { useState, useMemo, useEffect } = React;
 
+        // --- UTILITY FUNCTIONS ---
+        const formatCurrency = (value) => {
+            if (value === null || value === undefined || isNaN(value)) return '$0';
+            return `${value > 0 ? '+' : ''}${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)}`;
+        };
+
+        const formatPrice = (value) => {
+            if (value === null || value === undefined || isNaN(value)) return '$0';
+            return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
+        };
+
         // --- ENHANCED CMA FETCH - Gets both Active and Closed Comparables ---
-        const fetchComps = async (city, sqft, yearBuilt, address, radiusMiles = 2, sqftDelta = 700, monthsBack = 6, latitude = null, longitude = null) => {
-            //console.log('Fetching CMA comparables:', { city, sqft, yearBuilt, address, radiusMiles, sqftDelta, monthsBack, latitude, longitude });
+        const fetchComps = async (city, sqft, yearBuilt, address, radiusMiles = 5, sqftDelta = 1200, monthsBack = 12, latitude = null, longitude = null, advancedOptions = {}) => {
+            //console.log('Fetching CMA comparables:', { city, sqft, yearBuilt, address, radiusMiles, sqftDelta, monthsBack, latitude, longitude, advancedOptions });
 
             const params = new URLSearchParams();
             if (address) params.set('address', address);
@@ -109,6 +123,18 @@
             params.set('radius_miles', radiusMiles);
             params.set('sqft_delta', sqftDelta);
             params.set('months_back', monthsBack);
+
+            // Add advanced options
+            if (advancedOptions.yearBuiltRange) params.set('year_built_range', advancedOptions.yearBuiltRange);
+            if (advancedOptions.residentialAreas && advancedOptions.residentialAreas.length > 0) {
+                // Send multiple residential areas as comma-separated string
+                params.set('residential_area', advancedOptions.residentialAreas.join(','));
+            }
+            if (advancedOptions.waterfront) params.set('waterfront', 'true');
+            if (advancedOptions.newConstruction) params.set('new_construction', 'true');
+            if (advancedOptions.sameSubdivision) params.set('same_subdivision', 'true');
+            if (advancedOptions.houseStyle) params.set('house_style', advancedOptions.houseStyle);
+            if (advancedOptions.subdivisionFilter) params.set('subdivision_filter', advancedOptions.subdivisionFilter);
 
             const res = await fetch(`/api/cma-comparables?${params.toString()}`);
             //console.log('CMA API response status:', res.status);
@@ -203,6 +229,9 @@
             const [comparisonSummary, setComparisonSummary] = useState(null);
             const [propertyPhotos, setPropertyPhotos] = useState([]);
             const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+            const [manualAddressMode, setManualAddressMode] = useState(false);
+            const [googleSelectedAddress, setGoogleSelectedAddress] = useState('');
+            const [addressSearchTimeout, setAddressSearchTimeout] = useState(null);
 
             const handlePropertyDetailsFromAddress = async (address) => {
                 if (!address) return;
@@ -220,8 +249,8 @@
                     const data = await response.json();
 
                     if (data.error) {
-                        setSearchMessage('❌ Property not found in MLS database');
-                        setPropertyDetailsError('Full property data not available (API lookup failed).');
+                        setSearchMessage('Property not found in MLS database');
+                        setPropertyDetailsError('Please enter property details manually below.');
                         return;
                     }
 
@@ -232,7 +261,7 @@
                             ...prev,
                             address: data.UnparsedAddress || data.address || prev.address,
                             city: data.City || prev.city,
-                            sqft: data.AboveGradeFinishedArea || data.LivingArea || data.LivingAreaTotal || prev.sqft,
+                            sqft: data.LivingArea || data.AboveGradeFinishedArea || data.LivingAreaTotal || prev.sqft,
                             basementSqft: data.BelowGradeFinishedArea || data.BasementFinishedArea || prev.basementSqft,
                             yearBuilt: data.YearBuilt || prev.yearBuilt,
                             beds: data.BedroomsTotal || data.Bedrooms || prev.beds,
@@ -246,6 +275,7 @@
                             propertySubType: data.PropertySubType || prev.propertySubType,
                             listPrice: data.ListPrice || prev.listPrice,
                             soldPrice: data.ClosePrice || data.SoldPrice || prev.soldPrice,
+                            closeDate: data.CloseDate || prev.closeDate,
                             lotSizeAcres: data.LotSizeAcres || prev.lotSizeAcres,
                             lotSizeSquareFeet: data.LotSizeSquareFeet || prev.lotSizeSquareFeet,
                             stories: data.StoriesTotal || data.Stories || prev.stories,
@@ -255,7 +285,9 @@
                                 : prev.pricePerSqft,
                             // Add coordinates for distance calculations
                             latitude: data.Latitude || prev.latitude,
-                            longitude: data.Longitude || prev.longitude
+                            longitude: data.Longitude || prev.longitude,
+                            // Add subdivision for comparison and filtering
+                            subdivision: data.SubdivisionName || prev.subdivision
                         };
                         return newProperty;
                     });
@@ -288,8 +320,8 @@
                     setPropertyDetailsError('');
                 } catch (error) {
                     console.error('Error fetching property details:', error);
-                    setSearchMessage('⚠️ Failed to fetch property details');
-                    setPropertyDetailsError('Full property data not available (network error).');
+                    setSearchMessage('Unable to load property details');
+                    setPropertyDetailsError('Please enter property details manually below.');
                 } finally {
                     setIsLoadingDetails(false);
                 }
@@ -348,13 +380,13 @@
                             console.error('Error fetching comps for comparison:', err);
                         }
                     } else {
-                        setSearchMessage('❌ Property not found in MLS. Please enter details manually.');
-                        setPropertyDetailsError('Full property data not available (API lookup failed).');
+                        setSearchMessage('Property not found in MLS. Please enter details manually.');
+                        setPropertyDetailsError('Property details are not available for auto-fill.');
                     }
                 } catch (error) {
                     console.error('Property search error:', error);
-                    setSearchMessage('⚠️ Search failed. Please enter details manually.');
-                    setPropertyDetailsError('Full property data not available (network error).');
+                    setSearchMessage('Search failed. Please enter details manually.');
+                    setPropertyDetailsError('Please enter property details manually below.');
                 }
 
                 setIsSearching(false);
@@ -367,6 +399,22 @@
                     ...prev,
                     [name]: type === 'number' ? (value === '' ? '' : parseFloat(value)) : value
                 }));
+
+                // Auto-search for property details when address is manually typed
+                if (name === 'address' && value.trim() && manualAddressMode) {
+                    // Clear previous timeout
+                    if (addressSearchTimeout) {
+                        clearTimeout(addressSearchTimeout);
+                    }
+
+                    // Set new timeout for debounced search
+                    const newTimeout = setTimeout(() => {
+                        handlePropertyDetailsFromAddress(value.trim());
+                    }, 1500); // Wait 1.5 seconds after user stops typing
+
+                    setAddressSearchTimeout(newTimeout);
+                }
+
                 //console.log('Form change:', name, value, type);
             };
 
@@ -417,6 +465,17 @@
                             const postal = findComponent(['postal_code']);
 
                             const address = ((streetNumber ? streetNumber + ' ' : '') + (route || '')).trim();
+                            const fullGoogleAddress = place.formatted_address || address;
+
+                            // Store what Google selected for potential manual override
+                            setGoogleSelectedAddress(fullGoogleAddress);
+
+                            // Check if Google selected a unit number that might be wrong
+                            const hasUnit = /\s#\s?\d+/i.test(fullGoogleAddress) || /\bunit\s+\d+/i.test(fullGoogleAddress) || /\bapt\s+\d+/i.test(fullGoogleAddress);
+
+                            if (hasUnit) {
+                                setSearchMessage(`Address "${fullGoogleAddress}" contains a unit number. Use "Edit Address" if you need the main property instead.`);
+                            }
 
                             setSubjectProperty(prev => ({
                                 ...prev,
@@ -428,15 +487,61 @@
                                 ...(place.geometry && place.geometry.location ? { latitude: place.geometry.location.lat(), longitude: place.geometry.location.lng() } : {})
                             }));
 
-                            // --- Auto-trigger property details fetch ---
-                            const searchAddress = (address || place.formatted_address || '').trim();
-                            if (searchAddress) {
-                                handlePropertyDetailsFromAddress(searchAddress);
+                            // --- Auto-trigger property details fetch only if not in manual mode ---
+                            if (!manualAddressMode) {
+                                const searchAddress = (address || place.formatted_address || '').trim();
+                                if (searchAddress) {
+                                    handlePropertyDetailsFromAddress(searchAddress);
+                                }
                             }
                         }
                     });
                 }
             }, []);
+
+            const handleManualAddressOverride = () => {
+                setManualAddressMode(true);
+                setSearchMessage('You can now edit the address manually');
+
+                // Clear any previous auto-search results
+                setPropertyPhotos([]);
+                setPropertyDetailsError('');
+
+                // Disable Google autocomplete temporarily
+                if (autocompleteRef.current) {
+                    autocompleteRef.current.setOptions({ types: [] });
+                }
+            };
+
+            const handleManualAddressSearch = () => {
+                const searchAddress = subjectProperty.address.trim();
+                if (searchAddress) {
+                    handlePropertyDetailsFromAddress(searchAddress);
+                } else {
+                    setSearchMessage('Please enter an address to search');
+                }
+            };
+
+            const resetToGoogleMode = () => {
+                setManualAddressMode(false);
+                setSearchMessage('');
+
+                // Re-enable Google autocomplete
+                if (autocompleteRef.current) {
+                    autocompleteRef.current.setOptions({
+                        types: ['address'],
+                        componentRestrictions: { country: 'us' }
+                    });
+                }
+
+                // If there was a Google selected address, restore it
+                if (googleSelectedAddress) {
+                    setSubjectProperty(prev => ({
+                        ...prev,
+                        address: googleSelectedAddress
+                    }));
+                }
+            };
 
             return (
                 <div className="animate-fade-in">
@@ -460,6 +565,9 @@
                                     <label htmlFor="address" className="flex items-center text-sm font-semibold text-gray-800">
                                         <span className="text-red-500 mr-1">*</span>
                                         Property Address
+                                        {manualAddressMode && (
+                                            <span className="ml-2 text-xs bg-sky-100 text-sky-800 px-2 py-1 rounded">Editing</span>
+                                        )}
                                     </label>
                                     <div className="relative">
                                         <input
@@ -470,9 +578,54 @@
                                             value={subjectProperty.address}
                                             onChange={handleChange}
                                             required
-                                            className="w-full pl-4 pr-4 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 font-medium"
+                                            className={`w-full pl-4 pr-4 py-3 text-sm bg-white border-2 rounded-lg shadow-sm transition-all duration-200 hover:border-gray-300 font-medium ${manualAddressMode
+                                                ? 'border-sky-300 focus:border-sky-500 focus:ring-2 focus:ring-sky-200'
+                                                : 'border-gray-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200'
+                                                }`}
                                             placeholder="🏠 Start typing an address..."
                                         />
+                                    </div>
+
+                                    {/* Address Control Buttons */}
+                                    <div className="flex flex-wrap gap-2 mt-2">
+                                        {!manualAddressMode ? (
+                                            <>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleManualAddressOverride}
+                                                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-full transition-colors flex items-center"
+                                                >
+                                                    <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                                    </svg>
+                                                    Edit Address
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleManualAddressSearch}
+                                                    disabled={isLoadingDetails}
+                                                    className="text-xs bg-sky-100 hover:bg-sky-200 text-sky-800 px-3 py-1 rounded-full transition-colors disabled:opacity-50 flex items-center"
+                                                >
+                                                    <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                                    </svg>
+                                                    Search Property
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={resetToGoogleMode}
+                                                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-full transition-colors flex items-center"
+                                                >
+                                                    <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                                                    </svg>
+                                                    Auto-Complete
+                                                </button>
+                                            </>
+                                        )}
                                     </div>
                                 </div>
                                 <div className="space-y-2">
@@ -529,15 +682,34 @@
 
                         {/* Search Parameters */}
                         <div className="mb-8">
-                            <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                            <h3 className="text-lg font-semibold text-gray-800 mb-2 flex items-center">
                                 <svg className="w-5 h-5 mr-2 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                                 </svg>
                                 Search Parameters
                             </h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <p className="text-sm text-gray-600 mb-4">
+                                Control how the system finds comparable properties. Narrower parameters = more similar properties but fewer results. Broader parameters = more results but less precise matches.
+                            </p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                                 <div className="space-y-2">
-                                    <label htmlFor="radiusMiles" className="text-sm font-semibold text-gray-800">🎯 Search Radius (miles)</label>
+                                    <label htmlFor="radiusMiles" className="text-sm font-semibold text-gray-800 flex items-center">
+                                        🎯 Search Radius (miles)
+                                        <div className="relative group ml-2">
+                                            <svg className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                                            </svg>
+                                            <div className="absolute z-50 invisible group-hover:visible bg-gray-800 text-white text-xs rounded-lg py-2 px-3 -top-2 left-6 transform -translate-y-full w-64">
+                                                <div className="font-semibold mb-1">Distance from subject property</div>
+                                                <div className="text-gray-300">
+                                                    • <strong>0.5-1 mile:</strong> Immediate neighborhood<br />
+                                                    • <strong>1-2 miles:</strong> Local area (standard)<br />
+                                                    • <strong>3+ miles:</strong> Broader market area
+                                                </div>
+                                                <div className="absolute top-full left-3 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-800"></div>
+                                            </div>
+                                        </div>
+                                    </label>
                                     <input
                                         type="number"
                                         name="radiusMiles"
@@ -549,9 +721,32 @@
                                         className="w-full pl-4 pr-4 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 font-medium"
                                         placeholder="1.0"
                                     />
+                                    <p className="text-xs text-gray-500">Search within {subjectProperty.radiusMiles || 5} mile{(subjectProperty.radiusMiles || 5) !== 1 ? 's' : ''} of the property</p>
                                 </div>
                                 <div className="space-y-2">
-                                    <label htmlFor="sqftDelta" className="text-sm font-semibold text-gray-800">📏 Sqft Delta (±)</label>
+                                    <label htmlFor="sqftDelta" className="text-sm font-semibold text-gray-800 flex items-center">
+                                        📏 Sqft Delta (±)
+                                        <div className="relative group ml-2">
+                                            <svg className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                                            </svg>
+                                            <div className="absolute z-50 invisible group-hover:visible bg-gray-800 text-white text-xs rounded-lg py-2 px-3 -top-2 left-6 transform -translate-y-full w-64">
+                                                <div className="font-semibold mb-1">Square footage tolerance range</div>
+                                                <div className="text-gray-300">
+                                                    • <strong>200-400:</strong> Very similar size<br />
+                                                    • <strong>500-700:</strong> Good range (default)<br />
+                                                    • <strong>1000+:</strong> Broader size range
+                                                </div>
+                                                <div className="text-yellow-200 mt-1 text-[10px]">
+                                                    {subjectProperty.sqft ?
+                                                        `Will find homes ${parseInt(subjectProperty.sqft) - (parseInt(subjectProperty.sqftDelta) || 700)} - ${parseInt(subjectProperty.sqft) + (parseInt(subjectProperty.sqftDelta) || 700)} sqft`
+                                                        : 'Enter property sqft to see range'
+                                                    }
+                                                </div>
+                                                <div className="absolute top-full left-3 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-800"></div>
+                                            </div>
+                                        </div>
+                                    </label>
                                     <input
                                         type="number"
                                         name="sqftDelta"
@@ -563,7 +758,181 @@
                                         className="w-full pl-4 pr-4 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 font-medium"
                                         placeholder="500"
                                     />
+                                    {subjectProperty.sqft && (
+                                        <p className="text-xs text-gray-500">
+                                            Will find homes {parseInt(subjectProperty.sqft) - (parseInt(subjectProperty.sqftDelta) || 700)} - {parseInt(subjectProperty.sqft) + (parseInt(subjectProperty.sqftDelta) || 700)} sqft
+                                        </p>
+                                    )}
                                 </div>
+                                <div className="space-y-2">
+                                    <label htmlFor="monthsBack" className="text-sm font-semibold text-gray-800 flex items-center">
+                                        📅 Months Back
+                                        <div className="relative group ml-2">
+                                            <svg className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                                            </svg>
+                                            <div className="absolute z-50 invisible group-hover:visible bg-gray-800 text-white text-xs rounded-lg py-2 px-3 -top-2 left-6 transform -translate-y-full w-64">
+                                                <div className="font-semibold mb-1">How far back to search for sold properties</div>
+                                                <div className="text-gray-300">
+                                                    • <strong>3-6 months:</strong> Most recent sales (better for hot markets)<br />
+                                                    • <strong>6-12 months:</strong> Standard timeframe (balanced view)<br />
+                                                    • <strong>12+ months:</strong> More data (good for slow markets)
+                                                </div>
+                                                <div className="absolute top-full left-3 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-800"></div>
+                                            </div>
+                                        </div>
+                                    </label>
+                                    <input
+                                        type="number"
+                                        name="monthsBack"
+                                        id="monthsBack"
+                                        min="3"
+                                        max="24"
+                                        value={subjectProperty.monthsBack}
+                                        onChange={handleChange}
+                                        className="w-full pl-4 pr-4 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 font-medium"
+                                        placeholder="6"
+                                    />
+                                    <p className="text-xs text-gray-500">Currently includes sales from the last {subjectProperty.monthsBack || 6} months</p>
+                                </div>
+                                <div className="space-y-2">
+                                    <label htmlFor="yearBuiltRange" className="text-sm font-semibold text-gray-800 flex items-center">
+                                        🗓️ Year Built Range (±)
+                                        <div className="relative group ml-2">
+                                            <svg className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                                            </svg>
+                                            <div className="absolute z-50 invisible group-hover:visible bg-gray-800 text-white text-xs rounded-lg py-2 px-3 -top-2 left-6 transform -translate-y-full w-64">
+                                                <div className="font-semibold mb-1">Age range for comparable properties</div>
+                                                <div className="text-gray-300">
+                                                    • <strong>±5 years:</strong> Very similar age homes<br />
+                                                    • <strong>±10 years:</strong> Good balance (default)<br />
+                                                    • <strong>±20+ years:</strong> Broader age range
+                                                </div>
+                                                <div className="text-yellow-200 mt-1 text-[10px]">
+                                                    {subjectProperty.yearBuilt ?
+                                                        `Will find homes built ${parseInt(subjectProperty.yearBuilt) - (parseInt(subjectProperty.yearBuiltRange) || 10)} - ${parseInt(subjectProperty.yearBuilt) + (parseInt(subjectProperty.yearBuiltRange) || 10)}`
+                                                        : 'Enter property year built to see range'
+                                                    }
+                                                </div>
+                                                <div className="absolute top-full left-3 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-800"></div>
+                                            </div>
+                                        </div>
+                                    </label>
+                                    <input
+                                        type="number"
+                                        name="yearBuiltRange"
+                                        id="yearBuiltRange"
+                                        min="5"
+                                        max="50"
+                                        value={subjectProperty.yearBuiltRange}
+                                        onChange={handleChange}
+                                        className="w-full pl-4 pr-4 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 font-medium"
+                                        placeholder="10"
+                                    />
+                                    {subjectProperty.yearBuilt && (
+                                        <p className="text-xs text-gray-500">
+                                            Will find homes built between {parseInt(subjectProperty.yearBuilt) - (parseInt(subjectProperty.yearBuiltRange) || 10)} - {parseInt(subjectProperty.yearBuilt) + (parseInt(subjectProperty.yearBuiltRange) || 10)}
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Advanced Comparables Options */}
+                        <div className="mb-8">
+                            <h3 className="text-lg font-semibold text-gray-800 mb-2 flex items-center">
+                                <svg className="w-5 h-5 mr-2 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
+                                </svg>
+                                Advanced Comparables
+                            </h3>
+                            <p className="text-sm text-gray-600 mb-4">
+                                Filter comparable properties with these simple criteria.
+                            </p>
+
+                            {/* Residential Areas - Simplified */}
+                            <div className="mb-6">
+                                <label className="text-sm font-semibold text-gray-800 mb-2 block">🏘️ Residential Areas/Neighborhoods</label>
+                                <div className="space-y-2">
+                                    {subjectProperty.residentialAreas.map((area, index) => (
+                                        <div key={index} className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                value={area}
+                                                onChange={(e) => {
+                                                    const newAreas = [...subjectProperty.residentialAreas];
+                                                    newAreas[index] = e.target.value;
+                                                    setSubjectProperty(prev => ({ ...prev, residentialAreas: newAreas }));
+                                                }}
+                                                className="flex-1 pl-4 pr-4 py-2 text-sm bg-white border border-gray-300 rounded-lg focus:border-sky-500 focus:ring-1 focus:ring-sky-200"
+                                                placeholder="e.g. West Omaha, Benson, etc."
+                                            />
+                                            {subjectProperty.residentialAreas.length > 1 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const newAreas = subjectProperty.residentialAreas.filter((_, i) => i !== index);
+                                                        setSubjectProperty(prev => ({ ...prev, residentialAreas: newAreas }));
+                                                    }}
+                                                    className="px-2 py-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
+                                                    title="Remove area"
+                                                >
+                                                    ✕
+                                                </button>
+                                            )}
+                                        </div>
+                                    ))}
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setSubjectProperty(prev => ({
+                                                ...prev,
+                                                residentialAreas: [...prev.residentialAreas, '']
+                                            }));
+                                        }}
+                                        className="text-sm text-sky-600 hover:text-sky-800"
+                                    >
+                                        + Add Another Area
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Simple Checkboxes */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <label htmlFor="waterfront" className="flex items-center text-sm text-gray-800">
+                                    <input
+                                        type="checkbox"
+                                        name="waterfront"
+                                        id="waterfront"
+                                        checked={subjectProperty.waterfront}
+                                        onChange={handleChange}
+                                        className="mr-2 h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
+                                    />
+                                    🌊 Waterfront Properties Only
+                                </label>
+                                <label htmlFor="newConstruction" className="flex items-center text-sm text-gray-800">
+                                    <input
+                                        type="checkbox"
+                                        name="newConstruction"
+                                        id="newConstruction"
+                                        checked={subjectProperty.newConstruction}
+                                        onChange={handleChange}
+                                        className="mr-2 h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
+                                    />
+                                    🔨 New Construction Only
+                                </label>
+                                <label htmlFor="sameSubdivision" className="flex items-center text-sm text-gray-800">
+                                    <input
+                                        type="checkbox"
+                                        name="sameSubdivision"
+                                        id="sameSubdivision"
+                                        checked={subjectProperty.sameSubdivision}
+                                        onChange={handleChange}
+                                        className="mr-2 h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
+                                    />
+                                    🏘️ Same Subdivision Only
+                                </label>
                             </div>
                         </div>
 
@@ -651,12 +1020,24 @@
 
                     {/* Search Message */}
                     {(searchMessage || propertyDetailsError) && (
-                        <div className="mt-4 p-3 rounded-md border space-y-2 ${propertyDetailsError ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'}">
-                            {searchMessage && <p className="text-sm ${propertyDetailsError ? 'text-red-800' : 'text-blue-800'}">{searchMessage}</p>}
+                        <div className={`mt-4 p-3 rounded-md border space-y-2 ${propertyDetailsError ? 'bg-red-50 border-red-200' :
+                            searchMessage.includes('unit number') ? 'bg-yellow-50 border-yellow-200' :
+                                'bg-blue-50 border-blue-200'
+                            }`}>
+                            {searchMessage && (
+                                <p className={`text-sm ${propertyDetailsError ? 'text-red-800' :
+                                    searchMessage.includes('unit number') ? 'text-yellow-800' :
+                                        'text-blue-800'
+                                    }`}>
+                                    {searchMessage}
+                                </p>
+                            )}
                             {isLoadingDetails && (
                                 <div className="mt-2 flex items-center">
-                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 ${propertyDetailsError ? 'border-red-600' : 'border-blue-600'}"></div>
-                                    <span className="ml-2 text-xs ${propertyDetailsError ? 'text-red-600' : 'text-blue-600'}">Loading property details...</span>
+                                    <div className={`animate-spin rounded-full h-4 w-4 border-b-2 ${propertyDetailsError ? 'border-red-600' : 'border-blue-600'
+                                        }`}></div>
+                                    <span className={`ml-2 text-xs ${propertyDetailsError ? 'text-red-600' : 'text-blue-600'
+                                        }`}>Loading property details...</span>
                                 </div>
                             )}
                             {propertyDetailsError && (
@@ -768,7 +1149,7 @@
             );
         };
 
-        const ComparablesStep = ({ subjectProperty, selectedComps, setSelectedComps, prevStep, nextStep }) => {
+        const ComparablesStep = ({ subjectProperty, setSubjectProperty, selectedComps, setSelectedComps, prevStep, nextStep, showParametersModal, setShowParametersModal, showPropertyDetails }) => {
             useEffect(() => {
                 //console.log('ComparablesStep mounted');
                 setTimeout(() => {
@@ -781,8 +1162,8 @@
 
             const [cmaData, setCmaData] = useState({ active: [], closed: [], combined: [], counts: { active: 0, closed: 0, total: 0 } });
             const [loading, setLoading] = useState(false);
-            const [sortBy, setSortBy] = useState('distance'); // distance, price, size, date
-            const [filterBy, setFilterBy] = useState('all'); // all, similar_size, similar_age, similar_style, active_only, closed_only
+            const [sortBy, setSortBy] = useState('price'); // distance, price, size, date
+            const [filterBy, setFilterBy] = useState('all'); // all, similar_size, similar_age, similar_style, similar_subdivision, active_only, closed_only
             const [activeTab, setActiveTab] = useState('all'); // all, active, closed
             const [viewMode, setViewMode] = useState('detailed'); // detailed | compact
             const [visibleCount, setVisibleCount] = useState(60); // for compact view pagination
@@ -802,6 +1183,18 @@
             useEffect(() => {
                 setLoading(true);
                 //console.log('Subject Property Debug:', subjectProperty); // Debug log
+
+                // Prepare advanced options
+                const advancedOptions = {
+                    yearBuiltRange: subjectProperty.yearBuiltRange,
+                    residentialAreas: subjectProperty.residentialAreas.filter(area => area.trim() !== ''), // Filter out empty areas
+                    waterfront: subjectProperty.waterfront,
+                    newConstruction: subjectProperty.newConstruction,
+                    sameSubdivision: subjectProperty.sameSubdivision,
+                    houseStyle: subjectProperty.houseStyle,
+                    subdivisionFilter: subjectProperty.subdivisionFilter
+                };
+
                 fetchComps(
                     subjectProperty.city,
                     subjectProperty.sqft,
@@ -809,9 +1202,10 @@
                     subjectProperty.address,
                     subjectProperty.radiusMiles,
                     subjectProperty.sqftDelta,
-                    6, // monthsBack
+                    subjectProperty.monthsBack || 6,
                     subjectProperty.latitude,
-                    subjectProperty.longitude
+                    subjectProperty.longitude,
+                    advancedOptions
                 )
                     .then(data => {
                         setCmaData(data);
@@ -846,7 +1240,11 @@
                     );
                 } else if (filterBy === 'similar_style' && subjectProperty.style) {
                     comps = comps.filter(comp =>
-                        comp.propertyType === subjectProperty.style
+                        comp.style === subjectProperty.style
+                    );
+                } else if (filterBy === 'similar_subdivision' && subjectProperty.subdivision) {
+                    comps = comps.filter(comp =>
+                        comp.subdivision === subjectProperty.subdivision
                     );
                 } else if (filterBy === 'active_only') {
                     comps = comps.filter(comp => comp.isActive === true);
@@ -903,34 +1301,6 @@
                     return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>;
                 } else {
                     return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">Sold</span>;
-                }
-            };
-
-            // Function to show property details modal
-            const showPropertyDetails = async (comp) => {
-                setModalProperty(comp);
-                setShowModal(true);
-                setModalLoading(true);
-                setModalDetails(null);
-
-                try {
-                    const response = await fetch('http://gbcma.us-east-2.elasticbeanstalk.com/api/property-details-from-address', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ address: comp.address })
-                    });
-
-                    if (response.ok) {
-                        const details = await response.json();
-                        setModalDetails(details);
-                    } else {
-                        setModalDetails({ error: 'Failed to fetch property details' });
-                    }
-                } catch (error) {
-                    console.error('Error fetching property details:', error);
-                    setModalDetails({ error: 'Network error fetching details' });
-                } finally {
-                    setModalLoading(false);
                 }
             };
 
@@ -1031,22 +1401,23 @@
                     })}
 
                     <div className="mb-6">
-                        <h2 className="text-2xl font-bold text-gray-800 mb-2">Step 2: Select Comparable Properties</h2>
-                        <p className="text-gray-600 mb-4">
-                            Choose 3-5 of the most relevant properties using the comprehensive checklist below.
-                            <span className="text-sky-600 font-medium"> Found {cmaData.counts.active} active, {cmaData.counts.closed} sold ({cmaData.counts.total} total)</span>
-                        </p>
-
-                        {/* Debug Subject Property Info */}
-                        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-xs">
-                            <strong>Subject Property Debug:</strong>
-                            Address: {subjectProperty.address} |
-                            Sq Ft: {subjectProperty.sqft || 'N/A'} |
-                            Year: {subjectProperty.yearBuilt || 'N/A'} |
-                            City: {subjectProperty.city || 'N/A'} |
-                            Coordinates: {subjectProperty.latitude && subjectProperty.longitude
-                                ? `${subjectProperty.latitude}, ${subjectProperty.longitude}`
-                                : 'N/A'}
+                        <div className="flex justify-between items-start mb-4">
+                            <div>
+                                <h2 className="text-2xl font-bold text-gray-800 mb-2">Step 2: Select Comparable Properties</h2>
+                                <p className="text-gray-600">
+                                    Choose 3-5 of the most relevant properties using the comprehensive checklist below.
+                                    <span className="text-sky-600 font-medium"> Found {cmaData.counts.active} active, {cmaData.counts.closed} sold ({cmaData.counts.total} total)</span>
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowParametersModal(true)}
+                                className="ml-4 px-4 py-2 bg-gradient-to-r from-gray-600 to-gray-700 text-white text-sm font-medium rounded-lg hover:from-gray-700 hover:to-gray-800 transition-all duration-200 shadow-md hover:shadow-lg flex items-center"
+                            >
+                                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
+                                </svg>
+                                Adjust Search Parameters
+                            </button>
                         </div>
 
                         {/* Enhanced Status Tabs */}
@@ -1158,6 +1529,7 @@
                                             <option value="similar_size">📏 Similar size (±500 sq ft)</option>
                                             <option value="similar_age">🗓️ Similar age (±10 years)</option>
                                             <option value="similar_style">🏡 Similar style</option>
+                                            <option value="similar_subdivision">🏘️ Same subdivision</option>
                                             <option value="active_only">🟢 Active listings only</option>
                                             <option value="closed_only">🔵 Sold properties only</option>
                                         </select>
@@ -1171,6 +1543,74 @@
                             </div>
                         </div>
                     </div>
+
+                    {/* Market Analysis Summary */}
+                    {!loading && displayedComps.length > 0 && (
+                        <div className="mb-6 bg-gradient-to-r from-sky-50 to-blue-50 border border-sky-200 rounded-xl p-6">
+                            <h3 className="text-lg font-semibold text-sky-800 mb-4 flex items-center">
+                                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                </svg>
+                                Market Analysis
+                            </h3>
+                            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                                {(() => {
+                                    const activePrices = displayedComps.filter(c => c.isActive).map(c => c.listPrice || 0).filter(p => p > 0);
+                                    const soldPrices = displayedComps.filter(c => !c.isActive).map(c => c.soldPrice || 0).filter(p => p > 0);
+                                    const allPrices = [...activePrices, ...soldPrices];
+                                    const avgPrice = allPrices.length > 0 ? Math.round(allPrices.reduce((a, b) => a + b, 0) / allPrices.length) : 0;
+
+                                    const allSqfts = displayedComps.map(c => c.sqft || 0).filter(s => s > 0);
+                                    const avgSqft = allSqfts.length > 0 ? Math.round(allSqfts.reduce((a, b) => a + b, 0) / allSqfts.length) : 0;
+
+                                    const pricePerSqfts = allPrices.map((price, i) => allSqfts[i] ? Math.round(price / allSqfts[i]) : 0).filter(p => p > 0);
+                                    const avgPricePerSqft = pricePerSqfts.length > 0 ? Math.round(pricePerSqfts.reduce((a, b) => a + b, 0) / pricePerSqfts.length) : 0;
+
+                                    const soldComps = displayedComps.filter(c => !c.isActive && c.soldPrice);
+                                    const avgDaysOnMarket = soldComps.length > 0 ? Math.round(soldComps.reduce((sum, comp) => {
+                                        if (comp.onMarketDate && comp.closeDate) {
+                                            const start = new Date(comp.onMarketDate);
+                                            const end = new Date(comp.closeDate);
+                                            return sum + Math.max(0, Math.round((end - start) / (1000 * 60 * 60 * 24)));
+                                        }
+                                        return sum;
+                                    }, 0) / soldComps.length) : 0;
+
+                                    const activeCount = displayedComps.filter(c => c.isActive).length;
+                                    const soldCount = displayedComps.filter(c => !c.isActive).length;
+
+                                    return (
+                                        <>
+                                            <div className="bg-white p-4 rounded-lg shadow-sm text-center">
+                                                <div className="text-2xl font-bold text-sky-700">${avgPrice.toLocaleString()}</div>
+                                                <div className="text-xs text-gray-600">Avg Price</div>
+                                            </div>
+                                            <div className="bg-white p-4 rounded-lg shadow-sm text-center">
+                                                <div className="text-2xl font-bold text-sky-700">${avgPricePerSqft}</div>
+                                                <div className="text-xs text-gray-600">Avg $/SF</div>
+                                            </div>
+                                            <div className="bg-white p-4 rounded-lg shadow-sm text-center">
+                                                <div className="text-2xl font-bold text-sky-700">{avgSqft.toLocaleString()}</div>
+                                                <div className="text-xs text-gray-600">Avg Sq Ft</div>
+                                            </div>
+                                            <div className="bg-white p-4 rounded-lg shadow-sm text-center">
+                                                <div className="text-2xl font-bold text-sky-700">{avgDaysOnMarket}</div>
+                                                <div className="text-xs text-gray-600">Avg DOM</div>
+                                            </div>
+                                            <div className="bg-white p-4 rounded-lg shadow-sm text-center">
+                                                <div className="text-2xl font-bold text-green-600">{activeCount}</div>
+                                                <div className="text-xs text-gray-600">Active</div>
+                                            </div>
+                                            <div className="bg-white p-4 rounded-lg shadow-sm text-center">
+                                                <div className="text-2xl font-bold text-blue-600">{soldCount}</div>
+                                                <div className="text-xs text-gray-600">Sold</div>
+                                            </div>
+                                        </>
+                                    );
+                                })()}
+                            </div>
+                        </div>
+                    )}
 
                     {loading ? (
                         <div className="text-center py-8">
@@ -1303,6 +1743,8 @@
                                                             <p><span className="font-medium">Bed/Bath:</span> {comp.beds} bed, {comp.baths} bath</p>
                                                             <p><span className="font-medium">Garage:</span> {comp.garage} spaces</p>
                                                             <p><span className="font-medium">Year Built:</span> {comp.yearBuilt}</p>
+                                                            <p><span className="font-medium">Style:</span> {comp.style || 'N/A'}</p>
+                                                            <p><span className="font-medium">Subdivision:</span> {comp.subdivision || 'N/A'}</p>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -1615,7 +2057,7 @@
             );
         };
 
-        const ReportStep = ({ subjectProperty, selectedComps, prevStep, startOver, propertyDetailsError, setPropertyDetailsError }) => {
+        const ReportStep = ({ subjectProperty, selectedComps, prevStep, startOver, propertyDetailsError, setPropertyDetailsError, showPropertyDetails }) => {
             useEffect(() => {
                 //console.log('ReportStep mounted');
                 //console.log('Subject Property:', subjectProperty);
@@ -1631,11 +2073,10 @@
             const [isExporting, setIsExporting] = useState(false);
 
             const avgPricePerSqft = useMemo(() => {
-                if (selectedComps.length === 0) return 180;
-                const validComps = selectedComps.filter(comp => comp.soldPrice && comp.sqft && comp.soldPrice > 0 && comp.sqft > 0);
-                if (validComps.length === 0) return 180;
-                return validComps.reduce((acc, comp) => acc + (comp.soldPrice / comp.sqft), 0) / validComps.length;
-            }, [selectedComps]);
+                // Use subject property's implied price per sqft as baseline for adjustments
+                if (!subjectProperty || !subjectProperty.list_price || !subjectProperty.square_feet) return 180;
+                return subjectProperty.list_price / subjectProperty.square_feet;
+            }, [subjectProperty]);
 
             const adjustments = useMemo(() => selectedComps.map(comp => {
                 const adj = { id: comp.id, details: [] };
@@ -1721,10 +2162,6 @@
                 return validAdjustments.reduce((acc, adj) => acc + adj.adjustedPrice, 0) / validAdjustments.length;
             }, [adjustments]);
 
-            const formatCurrency = (value) => {
-                if (value === null || value === undefined || isNaN(value)) return '$0';
-                return `${value > 0 ? '+' : ''}${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)}`;
-            };
             const handlePrint = () => window.print();
 
             // --- EXPORT HELPERS ---
@@ -1797,7 +2234,7 @@
                     });
                     if (!resp.ok) {
                         console.warn('Failed to fetch full subject details for export');
-                        setPropertyDetailsError('Full property data not available (API lookup failed).');
+                        setPropertyDetailsError('Property details not available for complete export.');
                         return null;
                     }
                     const data = await resp.json();
@@ -1806,7 +2243,7 @@
                     return data;
                 } catch (e) {
                     console.error('Error fetching subject details for export:', e);
-                    setPropertyDetailsError('Full property data not available (network error).');
+                    setPropertyDetailsError('Unable to retrieve complete property details.');
                     return null;
                 }
             };
@@ -1970,7 +2407,7 @@
                     - Address: ${subjectProperty.address}
                     - City: ${subjectProperty.city}
                     - Style: ${subjectProperty.style}
-                    - Price: Around ${formatCurrency(finalValuation)}
+                    - Price: Around ${formatPrice(finalValuation)}
                     - Square Feet: ${subjectProperty.sqft}
                     - Bedrooms: ${subjectProperty.beds}
                     - Bathrooms: ${subjectProperty.baths}
@@ -1991,7 +2428,7 @@
                 const avgDOM = selectedComps.reduce((acc, comp) => acc + comp.dom, 0) / selectedComps.length;
                 const prompt = `As a real estate team lead in ${subjectProperty.city}, Nebraska, provide a concise listing strategy for a client.
                 - Subject Property Condition: ${subjectProperty.condition}
-                - Estimated Market Value: ${formatCurrency(finalValuation)}
+                - Estimated Market Value: ${formatPrice(finalValuation)}
                 - Comps' Average Days on Market: ${avgDOM.toFixed(0)} days.
                 Based on this data, suggest a recommended list price (e.g., at, slightly above, or slightly below market value) and a brief marketing suggestion. Keep it to 2-3 sentences.`;
                 const result = await callGeminiAPI(prompt);
@@ -2025,7 +2462,7 @@
                         - DOM: ${c.dom || 'N/A'}
                     `).join('');
 
-                    const prompt = `As a senior real estate analyst using Google Gemini, provide a professional "AI Verdict" on a subject property based on the following Comparative Market Analysis (CMA) data.\n\n**Subject Property Details:**\n${subjectDetails}\n\n**Calculated Data:**\n- Estimated Market Value: ${formatCurrency(finalValuation)}\n- Average Price/SqFt of Comps: $${avgPricePerSqft.toFixed(2)}\n\n**Comparable Properties Summary:**\n${compsSummary}\n\n**Your Task:**\nBased *only* on the data provided, generate a concise, professional verdict. Address the following points in a structured format (using markdown for bolding and bullet points):\n1. **Overall Assessment:** One-sentence summary of the property's market position.\n2. **Valuation Confidence:** Indicate whether the estimated value appears solid, aggressive, or conservative, with 1 short reason.\n3. **Key Strengths:** 2-3 bullet points (advantages vs comps).\n4. **Potential Risks:** 2-3 bullet points (possible weaknesses / market concerns).\n5. **Final Recommendation:** Brief actionable suggestion (pricing & positioning).\n\nKeep the response professional, data-driven, and under 220 words.`;
+                    const prompt = `As a senior real estate analyst using Google Gemini, provide a professional "AI Verdict" on a subject property based on the following Comparative Market Analysis (CMA) data.\n\n**Subject Property Details:**\n${subjectDetails}\n\n**Calculated Data:**\n- Estimated Market Value: ${formatPrice(finalValuation)}\n- Average Price/SqFt of Comps: $${avgPricePerSqft.toFixed(2)}\n\n**Comparable Properties Summary:**\n${compsSummary}\n\n**Your Task:**\nBased *only* on the data provided, generate a concise, professional verdict. Address the following points in a structured format (using markdown for bolding and bullet points):\n1. **Overall Assessment:** One-sentence summary of the property's market position.\n2. **Valuation Confidence:** Indicate whether the estimated value appears solid, aggressive, or conservative, with 1 short reason.\n3. **Key Strengths:** 2-3 bullet points (advantages vs comps).\n4. **Potential Risks:** 2-3 bullet points (possible weaknesses / market concerns).\n5. **Final Recommendation:** Brief actionable suggestion (pricing & positioning).\n\nKeep the response professional, data-driven, and under 220 words.`;
 
                     const result = await callGeminiAPI(prompt);
                     setAiVerdict(result);
@@ -2040,8 +2477,8 @@
             return (
                 <div className="animate-fade-in">
                     <div id="print-area" className="bg-white p-6 sm:p-8 rounded-lg shadow-lg">
-                        <header className="border-b-2 border-gray-200 pb-4 mb-6"><div className="flex justify-between items-center"><div><h1 className="text-3xl font-bold text-sky-700">Simple CMA</h1><p className="text-gray-600">Comparative Market Analysis</p></div><div className="text-right"><p className="font-semibold">Omaha & Lincoln Real Estate</p><p className="text-sm text-gray-500">Generated: {new Date().toLocaleDateString()}</p></div></div></header>
-                        <section id="summary" className="mb-8"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Valuation Summary</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><h3 className="font-semibold text-gray-700">Subject Property</h3><p className="text-lg text-gray-900">{subjectProperty.address}</p><p className="text-gray-600">{subjectProperty.city}</p></div><div className="bg-sky-50 p-4 rounded-lg text-center"><h3 className="font-semibold text-sky-800">Estimated Market Value</h3><p className="text-4xl font-bold text-sky-700 tracking-tight mt-1">{formatCurrency(finalValuation)}</p><div className="flex justify-center gap-4 mt-2 text-sm"><span>Low: {formatCurrency(finalValuation * 0.98)}</span><span>High: {formatCurrency(finalValuation * 1.02)}</span></div></div></div></section>
+                        <header className="border-b-2 border-gray-200 pb-4 mb-6"><div className="flex justify-between items-center"><div><h1 className="text-3xl font-bold text-sky-700">Simple CMA</h1><p className="text-gray-600">Comparative Market Analysis <span className="text-xs text-green-600">v2.0-format-fixed</span></p></div><div className="text-right"><p className="font-semibold">Omaha & Lincoln Real Estate</p><p className="text-sm text-gray-500">Generated: {new Date().toLocaleDateString()}</p></div></div></header>
+                        <section id="summary" className="mb-8"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Valuation Summary</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><h3 className="font-semibold text-gray-700">Subject Property</h3><p className="text-lg text-gray-900">{subjectProperty.address}</p><p className="text-gray-600">{subjectProperty.city}</p><p className="text-sm text-gray-500 mt-1">{subjectProperty.sqft?.toLocaleString()} sq ft</p></div><div className="bg-sky-50 p-4 rounded-lg text-center"><h3 className="font-semibold text-sky-800">Estimated Market Value</h3><p className="text-4xl font-bold text-sky-700 tracking-tight mt-1">{formatPrice(finalValuation)}</p><p className="text-sm text-sky-600 mt-1">{subjectProperty.sqft?.toLocaleString()} sq ft • ${subjectProperty.sqft && finalValuation ? (finalValuation / subjectProperty.sqft).toFixed(0) : 'N/A'}/sq ft</p><div className="flex justify-center gap-4 mt-2 text-sm"><span>Low: {formatPrice(finalValuation * 0.98)}</span><span>High: {formatPrice(finalValuation * 1.02)}</span></div></div></div></section>
 
                         <section id="ai-features" className="my-8 print-hidden">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -2074,7 +2511,7 @@
                             </div>
                         </section>
 
-                        <section id="comparison-chart" className="mb-8"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Side-by-Side Comparison</h2><div className="overflow-x-auto"><table className="w-full text-sm text-left text-gray-500"><thead className="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" className="py-3 px-6">Feature</th><th scope="col" className="py-3 px-6 bg-sky-50 text-sky-800">Subject Property</th>{selectedComps.map(comp => <th key={comp.id} scope="col" className="py-3 px-6">{comp.address}</th>)}</tr></thead><tbody>{[
+                        <section id="comparison-chart" className="mb-8"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Side-by-Side Comparison</h2><div className="overflow-x-auto"><table className="w-full text-sm text-left text-gray-500"><thead className="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" className="py-3 px-6">Feature</th><th scope="col" className="py-3 px-6 bg-sky-50 text-sky-800">Subject Property</th>{selectedComps.map(comp => <th key={comp.id} scope="col" className="py-3 px-6"><button onClick={() => showPropertyDetails(comp)} className="text-sky-600 hover:text-sky-800 hover:underline text-left">{comp.address}</button></th>)}</tr></thead><tbody>{[
                             { key: 'status', label: 'Status' },
                             { key: 'soldPrice', label: 'Sold Price' },
                             { key: 'listPrice', label: 'List Price' },
@@ -2084,6 +2521,8 @@
                             { key: 'garage', label: 'Garage Spaces' },
                             { key: 'yearBuilt', label: 'Year Built' },
                             { key: 'propertyType', label: 'Property Type' },
+                            { key: 'style', label: 'Architectural Style' },
+                            { key: 'subdivision', label: 'Subdivision' },
                             { key: 'dom', label: 'Days on Market' },
                             { key: 'pricePerSqft', label: '$/Sq Ft' },
                             { key: 'lotSizeAcres', label: 'Lot Size (Acres)' },
@@ -2153,7 +2592,7 @@
                             </div>
                         </section>
 
-                        <section id="adjustments"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Valuation Adjustments</h2><div className="overflow-x-auto"><table className="w-full text-sm text-left text-gray-500"><thead className="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" className="py-3 px-6">Comp Property</th><th scope="col" className="py-3 px-6">Adjustment Feature</th><th scope="col" className="py-3 px-6 text-right">Adjustment Value</th></tr></thead><tbody>{selectedComps.map((comp) => { const compAdjustments = adjustments.find(a => a.id === comp.id); const salePrice = comp.soldPrice || comp.listPrice || 0; return (<React.Fragment key={comp.id}><tr className="bg-white font-semibold"><td rowSpan={compAdjustments.details.length + 2} className="py-4 px-6 border-b border-r">{comp.address}<br /><span className="font-normal">{comp.isActive ? 'Listed' : 'Sold'}: ${salePrice.toLocaleString()}</span></td></tr>{compAdjustments.details.map((detail, detailIndex) => (<tr key={detailIndex} className="bg-white"><td className="py-1 px-6">{detail.feature}</td><td className={`py-1 px-6 text-right font-mono ${detail.adjustment > 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(detail.adjustment)}</td></tr>))}<tr className="bg-gray-50 font-bold"><td className="py-2 px-6 text-gray-800">Adjusted Sale Price</td><td className="py-2 px-6 text-right text-gray-800 font-mono">${compAdjustments.adjustedPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td></tr></React.Fragment>); })}</tbody></table></div></section>
+                        <section id="adjustments"><h2 className="text-xl font-bold text-gray-800 border-b border-gray-200 pb-2 mb-4">Valuation Adjustments</h2><div className="overflow-x-auto"><table className="w-full text-sm text-left text-gray-500"><thead className="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" className="py-3 px-6">Comp Property</th><th scope="col" className="py-3 px-6">Adjustment Feature</th><th scope="col" className="py-3 px-6 text-right">Adjustment Value</th></tr></thead><tbody>{selectedComps.map((comp) => { const compAdjustments = adjustments.find(a => a.id === comp.id); const salePrice = comp.soldPrice || comp.listPrice || 0; return (<React.Fragment key={comp.id}><tr className="bg-white font-semibold"><td rowSpan={compAdjustments.details.length + 2} className="py-4 px-6 border-b border-r"><button onClick={() => showPropertyDetails(comp)} className="text-sky-600 hover:text-sky-800 hover:underline text-left font-semibold">{comp.address}</button><br /><span className="font-normal">{comp.isActive ? 'Listed' : 'Sold'}: ${salePrice.toLocaleString()}</span></td></tr>{compAdjustments.details.map((detail, detailIndex) => (<tr key={detailIndex} className="bg-white"><td className="py-1 px-6">{detail.feature}</td><td className={`py-1 px-6 text-right font-mono ${detail.adjustment > 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(detail.adjustment)}</td></tr>))}<tr className="bg-gray-50 font-bold"><td className="py-2 px-6 text-gray-800">Adjusted Sale Price</td><td className="py-2 px-6 text-right text-gray-800 font-mono">${compAdjustments.adjustedPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td></tr></React.Fragment>); })}</tbody></table></div></section>
                         <footer className="text-center text-xs text-gray-500 pt-8 mt-8 border-t"><p>This report is an estimate of value based on available data and is not a formal appraisal. Market conditions can change rapidly.</p><p>Simple CMA © {new Date().getFullYear()}</p></footer>
                     </div>
                     <div className="flex justify-between mt-8 print-hidden">
@@ -2191,8 +2630,16 @@
                 garage: '',
                 condition: 'Average',
                 style: '',
-                radiusMiles: 2,
-                sqftDelta: 700,
+                radiusMiles: 5,
+                sqftDelta: 1200,
+                monthsBack: 12,
+                yearBuiltRange: 10,
+                houseStyle: '', // Added for house type/style filter
+                subdivisionFilter: '', // Added for subdivision filter
+                residentialAreas: [''], // Array for multiple areas, start with one empty field
+                waterfront: false,
+                newConstruction: false,
+                sameSubdivision: false,
                 propertyType: '',
                 propertySubType: '',
                 listPrice: '',
@@ -2208,6 +2655,50 @@
             const [selectedComps, setSelectedComps] = useState([]);
             const [showExplorer, setShowExplorer] = useState(false);
             const [propertyDetailsError, setPropertyDetailsError] = useState('');
+            const [showParametersModal, setShowParametersModal] = useState(false);
+
+            // Global modal state for property details
+            const [showModal, setShowModal] = useState(false);
+            const [modalProperty, setModalProperty] = useState(null);
+            const [modalDetails, setModalDetails] = useState(null);
+            const [modalLoading, setModalLoading] = useState(false);
+
+            // Handle form changes for search parameters modal
+            const handleChange = (e) => {
+                const { name, value, type } = e.target;
+                setSubjectProperty(prev => ({
+                    ...prev,
+                    [name]: type === 'number' ? (value === '' ? '' : parseFloat(value)) : value
+                }));
+            };
+
+            // Global function to show property details modal
+            const showPropertyDetails = async (comp) => {
+                setModalProperty(comp);
+                setShowModal(true);
+                setModalLoading(true);
+                setModalDetails(null);
+
+                try {
+                    const response = await fetch('http://gbcma.us-east-2.elasticbeanstalk.com/api/property-details-from-address', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ address: comp.address })
+                    });
+
+                    if (response.ok) {
+                        const details = await response.json();
+                        setModalDetails(details);
+                    } else {
+                        setModalDetails({ error: 'Failed to fetch property details' });
+                    }
+                } catch (error) {
+                    console.error('Error fetching property details:', error);
+                    setModalDetails({ error: 'Network error occurred' });
+                } finally {
+                    setModalLoading(false);
+                }
+            };
 
             return (
                 <div className="min-h-screen bg-gradient-to-br from-sky-50 via-white to-blue-50">
@@ -2226,10 +2717,14 @@
                             {step === 2 && (
                                 <ComparablesStep
                                     subjectProperty={subjectProperty}
+                                    setSubjectProperty={setSubjectProperty}
                                     selectedComps={selectedComps}
                                     setSelectedComps={setSelectedComps}
                                     prevStep={() => setStep(1)}
                                     nextStep={() => setStep(3)}
+                                    showParametersModal={showParametersModal}
+                                    setShowParametersModal={setShowParametersModal}
+                                    showPropertyDetails={showPropertyDetails}
                                 />
                             )}
                             {step === 3 && (
@@ -2240,15 +2735,250 @@
                                     startOver={() => { setSubjectProperty(initialSubjectState); setSelectedComps([]); setStep(1); }}
                                     propertyDetailsError={propertyDetailsError}
                                     setPropertyDetailsError={setPropertyDetailsError}
+                                    showPropertyDetails={showPropertyDetails}
                                 />
                             )}
                         </div>
+
+                        {/* Parameters Adjustment Modal */}
+                        {showParametersModal && (
+                            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                                <div className="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <h3 className="text-xl font-bold text-gray-800">Adjust Search Parameters</h3>
+                                        <button
+                                            onClick={() => setShowParametersModal(false)}
+                                            className="text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                                        >
+                                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                            </svg>
+                                        </button>
+                                    </div>
+
+                                    <div className="space-y-6">
+                                        {/* Search Radius */}
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-semibold text-gray-800">🎯 Search Radius</label>
+                                            <div className="relative">
+                                                <select name="radiusMiles" value={subjectProperty.radiusMiles} onChange={handleChange}
+                                                    className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium">
+                                                    <option value={0.5}>0.5 miles</option>
+                                                    <option value={1}>1 mile</option>
+                                                    <option value={2}>2 miles</option>
+                                                    <option value={3}>3 miles</option>
+                                                    <option value={5}>5 miles</option>
+                                                    <option value={10}>10 miles</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        {/* Square Footage Variance */}
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-semibold text-gray-800">📐 Square Footage Variance</label>
+                                            <div className="relative">
+                                                <select name="sqftDelta" value={subjectProperty.sqftDelta} onChange={handleChange}
+                                                    className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium">
+                                                    <option value={300}>±300 sq ft</option>
+                                                    <option value={500}>±500 sq ft</option>
+                                                    <option value={700}>±700 sq ft</option>
+                                                    <option value={1000}>±1000 sq ft</option>
+                                                    <option value={1500}>±1500 sq ft</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        {/* Months Back */}
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-semibold text-gray-800">📅 Months Back</label>
+                                            <div className="relative">
+                                                <select name="monthsBack" value={subjectProperty.monthsBack} onChange={handleChange}
+                                                    className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium">
+                                                    <option value={3}>3 months</option>
+                                                    <option value={6}>6 months</option>
+                                                    <option value={9}>9 months</option>
+                                                    <option value={12}>12 months</option>
+                                                    <option value={18}>18 months</option>
+                                                    <option value={24}>24 months</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        {/* Year Built Range */}
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-semibold text-gray-800">🏗️ Year Built Range</label>
+                                            <div className="relative">
+                                                <select name="yearBuiltRange" value={subjectProperty.yearBuiltRange} onChange={handleChange}
+                                                    className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium">
+                                                    <option value="any">Any Year Built</option>
+                                                    <option value="within_5">Within 5 years</option>
+                                                    <option value="within_10">Within 10 years</option>
+                                                    <option value="within_15">Within 15 years</option>
+                                                    <option value="within_20">Within 20 years</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        {/* House Type/Style */}
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-semibold text-gray-800">🏘️ House Type/Style</label>
+                                            <div className="relative">
+                                                <select name="houseStyle" value={subjectProperty.houseStyle || ''} onChange={handleChange}
+                                                    className="w-full pl-4 pr-10 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 appearance-none cursor-pointer font-medium">
+                                                    <option value="">All Styles</option>
+                                                    <option value="Ranch">Ranch</option>
+                                                    <option value="Traditional">Traditional</option>
+                                                    <option value="Contemporary">Contemporary</option>
+                                                    <option value="Colonial">Colonial</option>
+                                                    <option value="Tudor">Tudor</option>
+                                                    <option value="Craftsman">Craftsman</option>
+                                                    <option value="Victorian">Victorian</option>
+                                                    <option value="Modern">Modern</option>
+                                                    <option value="Mediterranean">Mediterranean</option>
+                                                    <option value="Cape Cod">Cape Cod</option>
+                                                    <option value="Split Level">Split Level</option>
+                                                    <option value="Other">Other</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        {/* Subdivision */}
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-semibold text-gray-800">🏡 Subdivision</label>
+                                            <div className="relative">
+                                                <input
+                                                    type="text"
+                                                    name="subdivisionFilter"
+                                                    placeholder="Enter subdivision name (optional)"
+                                                    value={subjectProperty.subdivisionFilter || ''}
+                                                    onChange={handleChange}
+                                                    className="w-full pl-4 pr-4 py-3 text-sm bg-white border-2 border-gray-200 rounded-lg shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 transition-all duration-200 hover:border-gray-300 font-medium"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Special Features Checkboxes */}
+                                        <div className="space-y-3">
+                                            <label className="text-sm font-semibold text-gray-800">🏖️ Special Features</label>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <label className="flex items-center space-x-2 cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        name="waterfront"
+                                                        checked={subjectProperty.waterfront || false}
+                                                        onChange={(e) => setSubjectProperty(prev => ({ ...prev, waterfront: e.target.checked }))}
+                                                        className="rounded border-gray-300 text-sky-600 focus:ring-sky-500"
+                                                    />
+                                                    <span className="text-sm text-gray-700">Waterfront Only</span>
+                                                </label>
+                                                <label className="flex items-center space-x-2 cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        name="newConstruction"
+                                                        checked={subjectProperty.newConstruction || false}
+                                                        onChange={(e) => setSubjectProperty(prev => ({ ...prev, newConstruction: e.target.checked }))}
+                                                        className="rounded border-gray-300 text-sky-600 focus:ring-sky-500"
+                                                    />
+                                                    <span className="text-sm text-gray-700">New Construction</span>
+                                                </label>
+                                                <label className="flex items-center space-x-2 cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        name="sameSubdivision"
+                                                        checked={subjectProperty.sameSubdivision || false}
+                                                        onChange={(e) => setSubjectProperty(prev => ({ ...prev, sameSubdivision: e.target.checked }))}
+                                                        className="rounded border-gray-300 text-sky-600 focus:ring-sky-500"
+                                                    />
+                                                    <span className="text-sm text-gray-700">Same Subdivision</span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex space-x-3 mt-8">
+                                        <button
+                                            onClick={() => {
+                                                setShowParametersModal(false);
+                                                // Trigger new search with updated parameters
+                                                handleSubmit({ preventDefault: () => { } });
+                                            }}
+                                            className="flex-1 py-3 bg-gradient-to-r from-sky-600 to-blue-600 text-white rounded-lg font-medium hover:from-sky-700 hover:to-blue-700 transition-all duration-200 shadow-md hover:shadow-lg"
+                                        >
+                                            Apply Changes & Refresh Results
+                                        </button>
+                                        <button
+                                            onClick={() => setShowParametersModal(false)}
+                                            className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition-all duration-200"
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Property Details Modal */}
+                        {showModal && (
+                            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[2000] p-4">
+                                <div className="bg-white rounded-lg max-w-4xl max-h-[90vh] overflow-y-auto w-full">
+                                    {/* Modal Header */}
+                                    <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
+                                        <h2 className="text-xl font-bold text-gray-800">
+                                            🏠 Property Details - {modalProperty?.address}
+                                        </h2>
+                                        <button
+                                            onClick={() => setShowModal(false)}
+                                            className="text-gray-500 hover:text-gray-700 text-2xl"
+                                        >
+                                            ×
+                                        </button>
+                                    </div>
+
+                                    {/* Modal Content */}
+                                    <div className="p-6">
+                                        {modalLoading ? (
+                                            <div className="text-center py-8">
+                                                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600 mx-auto"></div>
+                                                <p className="text-gray-600 mt-4">Loading property details...</p>
+                                            </div>
+                                        ) : modalDetails?.error ? (
+                                            <div className="text-center py-8">
+                                                <p className="text-red-600">{modalDetails.error}</p>
+                                            </div>
+                                        ) : modalDetails ? (
+                                            <div className="space-y-6">
+                                                <div className="text-center py-8">
+                                                    <p className="text-gray-600">Property details loaded successfully</p>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="text-center py-8">
+                                                <p className="text-gray-600">Select a property to view detailed information</p>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Modal Footer */}
+                                    <div className="sticky bottom-0 bg-white border-t px-6 py-4 flex justify-end">
+                                        <button
+                                            onClick={() => setShowModal(false)}
+                                            className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                                        >
+                                            Close
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             );
         };
 
         ReactDOM.render(<App />, document.getElementById('root'));
+
+        // Debug: Test formatPrice function
+        console.log('formatPrice test:', formatPrice ? formatPrice(344355) : 'formatPrice not defined');
     </script>
 </body>
 

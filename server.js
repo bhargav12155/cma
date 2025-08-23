@@ -104,9 +104,16 @@ app.get("/api/cma-comparables", async (req, res) => {
     sqft,
     latitude,
     longitude,
-    radius_miles = 2,
-    sqft_delta = 700,
-    months_back = 6,
+    radius_miles = 5,
+    sqft_delta = 1200,
+    months_back = 12,
+    year_built_range,
+    residential_area,
+    price_range,
+    lot_size,
+    waterfront,
+    new_construction,
+    same_subdivision,
   } = req.query;
 
   //console.log("Received CMA comparables request:", req.query);
@@ -134,12 +141,119 @@ app.get("/api/cma-comparables", async (req, res) => {
       );
     }
 
+    // Advanced filters
+
+    // Year built range filter
+    if (year_built_range && sqft) {
+      // Assuming we have a year built value to compare against
+      const yearBuilt = parseInt(year_built_range);
+      if (yearBuilt > 0) {
+        const minYear =
+          new Date().getFullYear() - yearBuilt - parseInt(year_built_range);
+        const maxYear =
+          new Date().getFullYear() - yearBuilt + parseInt(year_built_range);
+        baseFilters.push(`YearBuilt ge ${minYear} and YearBuilt le ${maxYear}`);
+      }
+    }
+
+    // Residential area / neighborhood filter - now supports multiple areas
+    if (residential_area) {
+      const areas = residential_area
+        .split(",")
+        .map((area) => area.trim())
+        .filter((area) => area);
+      if (areas.length > 0) {
+        const areaFilters = areas.map(
+          (area) =>
+            `(contains(tolower(SubdivisionName),'${area.toLowerCase()}') or contains(tolower(UnparsedAddress),'${area.toLowerCase()}'))`
+        );
+        // Use OR logic to match any of the specified areas
+        baseFilters.push(`(${areaFilters.join(" or ")})`);
+      }
+    }
+
+    // Price range filter
+    if (price_range && price_range !== "any") {
+      let priceFilter = "";
+      switch (price_range) {
+        case "under_200k":
+          priceFilter = "(ListPrice lt 200000 or ClosePrice lt 200000)";
+          break;
+        case "200k_300k":
+          priceFilter =
+            "((ListPrice ge 200000 and ListPrice lt 300000) or (ClosePrice ge 200000 and ClosePrice lt 300000))";
+          break;
+        case "300k_400k":
+          priceFilter =
+            "((ListPrice ge 300000 and ListPrice lt 400000) or (ClosePrice ge 300000 and ClosePrice lt 400000))";
+          break;
+        case "400k_500k":
+          priceFilter =
+            "((ListPrice ge 400000 and ListPrice lt 500000) or (ClosePrice ge 400000 and ClosePrice lt 500000))";
+          break;
+        case "500k_750k":
+          priceFilter =
+            "((ListPrice ge 500000 and ListPrice lt 750000) or (ClosePrice ge 500000 and ClosePrice lt 750000))";
+          break;
+        case "750k_1m":
+          priceFilter =
+            "((ListPrice ge 750000 and ListPrice lt 1000000) or (ClosePrice ge 750000 and ClosePrice lt 1000000))";
+          break;
+        case "over_1m":
+          priceFilter = "(ListPrice ge 1000000 or ClosePrice ge 1000000)";
+          break;
+      }
+      if (priceFilter) {
+        baseFilters.push(priceFilter);
+      }
+    }
+
+    // Lot size filter
+    if (lot_size && lot_size !== "any") {
+      let lotFilter = "";
+      switch (lot_size) {
+        case "under_quarter":
+          lotFilter = "LotSizeAcres lt 0.25";
+          break;
+        case "quarter_half":
+          lotFilter = "LotSizeAcres ge 0.25 and LotSizeAcres lt 0.5";
+          break;
+        case "half_one":
+          lotFilter = "LotSizeAcres ge 0.5 and LotSizeAcres lt 1.0";
+          break;
+        case "over_one":
+          lotFilter = "LotSizeAcres ge 1.0";
+          break;
+      }
+      if (lotFilter) {
+        baseFilters.push(lotFilter);
+      }
+    }
+
+    // Waterfront filter
+    if (waterfront === "true") {
+      baseFilters.push("WaterfrontYN eq true");
+    }
+
+    // New construction filter
+    if (new_construction === "true") {
+      baseFilters.push("NewConstructionYN eq true");
+    }
+
+    // Same subdivision filter
+    if (same_subdivision === "true" && residential_area) {
+      baseFilters.push(
+        `tolower(SubdivisionName) eq '${residential_area.toLowerCase()}'`
+      );
+    }
+
     // Define the core fields we need for CMA
     const selectFields = [
       "UnparsedAddress",
       "City",
       "ListPrice",
       "ClosePrice",
+      "LivingArea",
       "AboveGradeFinishedArea",
       "BelowGradeFinishedArea",
       "BedroomsTotal",
@@ -153,9 +267,17 @@ app.get("/api/cma-comparables", async (req, res) => {
       "ListingKey",
       "PropertyType",
       "PropertyCondition",
+      "ArchitecturalStyle",
+      "SubdivisionName",
       "Coordinates",
       "Latitude",
       "Longitude",
+      "LotSizeAcres",
+      "LotSizeSquareFeet",
+      "WaterfrontYN",
+      "NewConstructionYN",
+      "PostalCode",
+      "StateOrProvince",
     ].join(",");
 
     // Build Active Properties query
@@ -167,7 +289,7 @@ app.get("/api/cma-comparables", async (req, res) => {
       `$filter=${encodeURIComponent(activeFilterString)}&` +
       `$select=${encodeURIComponent(selectFields)}&` +
       `$orderby=ListPrice asc&` +
-      `$top=50`;
+      `$top=150`;
 
     // Build Closed Properties query
     const closedFilters = [
@@ -182,7 +304,7 @@ app.get("/api/cma-comparables", async (req, res) => {
       `$filter=${encodeURIComponent(closedFilterString)}&` +
       `$select=${encodeURIComponent(selectFields)}&` +
       `$orderby=CloseDate desc&` +
-      `$top=50`;
+      `$top=150`;
 
     //console.log("Active Properties Query:", activeUrl);
     //console.log("Closed Properties Query:", closedUrl);
@@ -227,7 +349,7 @@ app.get("/api/cma-comparables", async (req, res) => {
 
     // Process and enhance the data
     const processProperty = (prop, isActive = false) => {
-      const sqftValue = prop.AboveGradeFinishedArea || 0;
+      const sqftValue = prop.LivingArea || prop.AboveGradeFinishedArea || 0;
       const price = isActive ? prop.ListPrice : prop.ClosePrice;
       const pricePerSqft =
         price && sqftValue ? Math.round(price / sqftValue) : 0;
@@ -265,6 +387,12 @@ app.get("/api/cma-comparables", async (req, res) => {
           prop.PropertyCondition.length > 0
             ? prop.PropertyCondition[0]
             : "Average",
+        style:
+          Array.isArray(prop.ArchitecturalStyle) &&
+          prop.ArchitecturalStyle.length > 0
+            ? prop.ArchitecturalStyle[0]
+            : "",
+        subdivision: prop.SubdivisionName || "",
         latitude: prop.Latitude,
         longitude: prop.Longitude,
         distance_miles,
@@ -1113,12 +1241,16 @@ app.post("/api/property-details-from-address", async (req, res) => {
   if (!address) return res.status(400).json({ error: "Missing address" });
 
   try {
-    // 1. Search for property by address
-    const searchUrl = `${paragonApiConfig.apiUrl}/${
-      paragonApiConfig.datasetId
-    }/Property?access_token=${
-      paragonApiConfig.serverToken
-    }&$filter=contains(tolower(UnparsedAddress),'${address.toLowerCase()}')&$select=ListingKey,UnparsedAddress,City,StandardStatus,Media`;
+    // Clean up the address for better matching
+    const cleanAddress = address.trim().toLowerCase().replace(/[,]/g, "");
+    console.log(
+      `Searching for property: "${address}" (cleaned: "${cleanAddress}")`
+    );
+
+    // 1. Search for property by address with more comprehensive filters
+    const searchUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Property?access_token=${paragonApiConfig.serverToken}&$filter=contains(tolower(UnparsedAddress),'${cleanAddress}')&$select=ListingKey,UnparsedAddress,City,StandardStatus,Media,PropertyType&$top=10`;
+
+    console.log("Search URL:", searchUrl);
     const searchResp = await fetch(searchUrl);
 
     if (!searchResp.ok) {
@@ -1134,16 +1266,52 @@ app.post("/api/property-details-from-address", async (req, res) => {
 
     const searchData = await searchResp.json();
     const results = searchData.value;
+    console.log(`Found ${results?.length || 0} potential matches`);
 
     if (!results || results.length === 0) {
       return res.status(404).json({ error: "No property found for address" });
     }
 
-    // 2. Get ListingKey of best match (first result)
-    const listingKey = results[0].ListingKey;
+    // 2. Find the best match - prefer exact matches first
+    let bestMatch = results[0]; // default to first result
 
-    // 3. Fetch full property details
-    const detailsUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Property('${listingKey}')?access_token=${paragonApiConfig.serverToken}`;
+    for (const result of results) {
+      if (result.UnparsedAddress) {
+        const resultAddress = result.UnparsedAddress.toLowerCase();
+        console.log(`Checking match: ${result.UnparsedAddress}`);
+
+        // Prefer exact matches without unit numbers
+        if (
+          resultAddress === `${cleanAddress}, gretna ne 68028` ||
+          resultAddress === `${cleanAddress} gretna ne 68028` ||
+          resultAddress === cleanAddress
+        ) {
+          bestMatch = result;
+          console.log(`Found exact match: ${result.UnparsedAddress}`);
+          break;
+        }
+
+        // Fallback to addresses that contain the search term but prefer without unit numbers
+        if (
+          resultAddress.includes(cleanAddress) &&
+          !resultAddress.includes("#")
+        ) {
+          bestMatch = result;
+          console.log(
+            `Found good match without unit: ${result.UnparsedAddress}`
+          );
+        }
+      }
+    }
+
+    console.log(
+      `Best match: ${bestMatch.UnparsedAddress} (${bestMatch.ListingKey})`
+    );
+
+    // 3. Fetch full property details using all available fields
+    const detailsUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Property('${bestMatch.ListingKey}')?access_token=${paragonApiConfig.serverToken}`;
+    console.log("Details URL:", detailsUrl);
+
     const detailsResp = await fetch(detailsUrl);
 
     if (!detailsResp.ok) {
@@ -1158,6 +1326,15 @@ app.post("/api/property-details-from-address", async (req, res) => {
     }
 
     const details = await detailsResp.json();
+    console.log("Retrieved property details for:", details.UnparsedAddress);
+    console.log("Living Area (LivingArea):", details.LivingArea);
+    console.log(
+      "Living Area (AboveGradeFinishedArea):",
+      details.AboveGradeFinishedArea
+    );
+    console.log("Subdivision:", details.SubdivisionName);
+    console.log("Style:", details.ArchitecturalStyle);
+
     return res.json(details);
   } catch (err) {
     console.error("Error fetching property details:", err.message);
