@@ -143,129 +143,55 @@
             return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
         };
 
-        // --- ENHANCED CMA FETCH - Uses New Property Search API for All Properties ---
+        // --- ENHANCED CMA FETCH - Gets both Active and Closed Comparables ---
         const fetchComps = async (city, sqft, yearBuilt, address, radiusMiles = 5, sqftDelta = 1200, monthsBack = 12, latitude = null, longitude = null, advancedOptions = {}) => {
-            console.log('=== SEARCH CRITERIA BEING SENT TO NEW API ===');
+            console.log('=== SEARCH CRITERIA BEING SENT TO API ===');
             console.log('Basic Parameters:', { city, sqft, yearBuilt, address, radiusMiles, sqftDelta, monthsBack, latitude, longitude });
             console.log('Advanced Options:', advancedOptions);
 
             const params = new URLSearchParams();
-
-            // Basic location and property filters
             if (address) params.set('address', address);
             if (city) params.set('city', city);
+            if (sqft) params.set('sqft', sqft);
             if (latitude) params.set('latitude', latitude);
             if (longitude) params.set('longitude', longitude);
+            params.set('radius_miles', radiusMiles);
+            params.set('sqft_delta', sqftDelta);
+            params.set('months_back', monthsBack);
 
-            // Square footage range (convert old sqft +/- delta to min/max)
-            if (sqft && sqftDelta) {
-                const minSqft = parseInt(sqft) - parseInt(sqftDelta);
-                const maxSqft = parseInt(sqft) + parseInt(sqftDelta);
-                params.set('min_sqft', Math.max(0, minSqft)); // Don't go below 0
-                params.set('max_sqft', maxSqft);
+            // Add advanced options
+            if (advancedOptions.yearBuiltRange) params.set('year_built_range', advancedOptions.yearBuiltRange);
+            if (advancedOptions.residentialAreas && advancedOptions.residentialAreas.length > 0) {
+                // Send multiple residential areas as comma-separated string
+                params.set('residential_area', advancedOptions.residentialAreas.join(','));
             }
-
-            // Year built range (convert to min/max)
-            if (yearBuilt && advancedOptions.yearBuiltRange) {
-                const yearRange = parseInt(advancedOptions.yearBuiltRange) || 10;
-                params.set('min_year_built', Math.max(1800, yearBuilt - yearRange));
-                params.set('max_year_built', Math.min(new Date().getFullYear(), yearBuilt + yearRange));
-            }
-
-            // Advanced property features
             if (advancedOptions.waterfront) params.set('waterfront', 'true');
             if (advancedOptions.newConstruction) params.set('new_construction', 'true');
-            if (advancedOptions.houseStyle) params.set('property_type', advancedOptions.houseStyle);
+            if (advancedOptions.sameSubdivision) params.set('same_subdivision', 'true');
+            if (advancedOptions.houseStyle) params.set('house_style', advancedOptions.houseStyle);
+            if (advancedOptions.subdivisionFilter) params.set('subdivision_filter', advancedOptions.subdivisionFilter);
 
-            // Subdivision/area filter
-            if (advancedOptions.residentialAreas && advancedOptions.residentialAreas.length > 0) {
-                // Use the first residential area for subdivision filter
-                params.set('subdivision', advancedOptions.residentialAreas[0]);
-            }
-            if (advancedOptions.subdivisionFilter) params.set('subdivision', advancedOptions.subdivisionFilter);
-
-            // Set reasonable limits for CMA
-            params.set('limit', '200'); // Get more results for better analysis
-            params.set('sort_by', 'ListPrice');
-            params.set('sort_order', 'desc');
-
-            console.log('=== FINAL NEW API URL PARAMETERS ===');
-            console.log('Full URL:', `/api/property-search-new?${params.toString()}`);
+            console.log('=== FINAL API URL PARAMETERS ===');
+            console.log('Full URL:', `/api/cma-comparables?${params.toString()}`);
             console.log('All Parameters:', Object.fromEntries(params));
 
-            const res = await fetch(`/api/property-search-new?${params.toString()}`);
+            const res = await fetch(`/api/cma-comparables?${params.toString()}`);
+            //console.log('CMA API response status:', res.status);
 
             if (!res.ok) {
-                console.error('Failed to fetch properties from new API:', await res.text());
-                return { active: [], closed: [], combined: [], counts: { active: 0, closed: 0, total: 0 } };
+                console.error('Failed to fetch CMA comparables:', await res.text());
+                return { active: [], closed: [], combined: [] };
             }
 
             const data = await res.json();
-            console.log('Fetched data from new API:', data);
-
-            // Process and categorize properties by status
-            const allProperties = data.properties || [];
-
-            // Categorize properties by status
-            const active = allProperties.filter(prop =>
-                prop.StandardStatus === 'Active' ||
-                prop.MlsStatus === 'ACTIVE' ||
-                prop.StandardStatus === 'Pending' ||
-                prop.MlsStatus === 'PENDING'
-            );
-
-            const closed = allProperties.filter(prop =>
-                prop.StandardStatus === 'Closed' ||
-                prop.MlsStatus === 'SOLD' ||
-                prop.CloseDate // Has a close date
-            );
-
-            // Transform properties to match expected format
-            const transformProperty = (prop) => ({
-                // Use already-processed fields from server if available, otherwise fall back to raw MLS fields
-                id: prop.id || prop.ListingKey || prop.ListingId,
-                address: prop.address || prop.UnparsedAddress,
-                city: prop.city || prop.City,
-                listPrice: prop.listPrice || prop.ListPrice,
-                soldPrice: prop.soldPrice || prop.ClosePrice,
-                sqft: prop.sqft || prop.LivingArea || prop.AboveGradeFinishedArea,
-                basementSqft: prop.basementSqft || prop.BelowGradeFinishedArea,
-                totalSqft: prop.totalSqft || ((prop.sqft || prop.LivingArea || 0) + (prop.basementSqft || prop.BelowGradeFinishedArea || 0)),
-                beds: prop.beds || prop.BedroomsTotal,
-                baths: prop.baths || prop.BathroomsTotalInteger,
-                garage: prop.garage || prop.GarageSpaces,
-                yearBuilt: prop.yearBuilt || prop.YearBuilt,
-                status: prop.status || prop.StandardStatus || prop.MlsStatus,
-                closeDate: prop.closeDate || prop.CloseDate,
-                onMarketDate: prop.onMarketDate || prop.OnMarketDate,
-                propertyType: prop.propertyType || prop.PropertyType,
-                condition: prop.condition || prop.PropertyCondition?.[0] || 'Unknown',
-                subdivision: prop.subdivision || prop.SubdivisionName,
-                style: prop.style || prop.ArchitecturalStyle,
-                pricePerSqft: prop.pricePerSqft || (prop.soldPrice && prop.sqft ? Math.round(prop.soldPrice / prop.sqft) : 0),
-                distance_miles: prop.distance_miles,
-                imageUrl: prop.imageUrl,
-                isActive: prop.isActive !== undefined ? prop.isActive : (prop.StandardStatus === 'Active' || prop.MlsStatus === 'ACTIVE')
-            });
-
-            const transformedActive = active.map(transformProperty);
-            const transformedClosed = closed.map(transformProperty);
-            const transformedCombined = allProperties.map(transformProperty);
+            //console.log('Fetched CMA data:', data);
 
             return {
-                active: transformedActive,
-                closed: transformedClosed,
-                combined: transformedCombined,
-                counts: {
-                    active: transformedActive.length,
-                    closed: transformedClosed.length,
-                    total: transformedCombined.length
-                },
-                meta: {
-                    searchParams: Object.fromEntries(params),
-                    totalFromAPI: data.count || 0,
-                    apiUrl: `/api/property-search-new?${params.toString()}`
-                }
+                active: data.active || [],
+                closed: data.closed || [],
+                combined: data.combined || [],
+                counts: data.counts || { active: 0, closed: 0, total: 0 },
+                meta: data.meta || {}
             };
         };
 
@@ -345,8 +271,6 @@
             const [manualAddressMode, setManualAddressMode] = useState(false);
             const [googleSelectedAddress, setGoogleSelectedAddress] = useState('');
             const [addressSearchTimeout, setAddressSearchTimeout] = useState(null);
-            const [googleMapsStatus, setGoogleMapsStatus] = useState('loading'); // 'loading', 'ready', 'error', 'unavailable'
-            const [retryCount, setRetryCount] = useState(0);
 
             const handlePropertyDetailsFromAddress = async (address) => {
                 if (!address) return;
@@ -388,7 +312,7 @@
                             city: data.City || prev.city,
                             // Use the API's mapped sqft field (AboveGradeFinishedArea) directly
                             sqft: data.sqft || data.AboveGradeFinishedArea || data.LivingArea || prev.sqft,
-                            basementSqft: data.basementSqft || data.BelowGradeFinishedArea || data.BasementFinishedArea || prev.basementSqft,
+                            basementSqft: data.BelowGradeFinishedArea || data.BasementFinishedArea || prev.basementSqft,
                             yearBuilt: data.YearBuilt || prev.yearBuilt,
                             beds: data.BedroomsTotal || data.Bedrooms || prev.beds,
                             baths: data.BathroomsTotalInteger || data.BathroomsTotal || data.BathroomsFull || prev.baths,
@@ -471,56 +395,39 @@
                 setSearchMessage('');
 
                 try {
-                    const response = await fetch(`/api/property-search-new?address=${encodeURIComponent(subjectProperty.address)}&limit=1`);
+                    const response = await fetch(`/api/property-search?address=${encodeURIComponent(subjectProperty.address)}`);
                     const data = await response.json();
 
-                    if (data.success && data.properties && data.properties.length > 0) {
-                        const property = data.properties[0]; // Get first matching property
+                    if (data.found) {
                         // Auto-fill the form with found property details
                         setSubjectProperty(prev => ({
                             ...prev,
-                            city: property.City || prev.city,
-                            sqft: property.LivingArea || prev.sqft,
-                            basementSqft: property.BelowGradeFinishedArea || prev.basementSqft,
-                            yearBuilt: property.YearBuilt || prev.yearBuilt,
-                            beds: property.BedroomsTotal || prev.beds,
-                            baths: property.BathroomsTotalInteger || prev.baths,
-                            garage: property.GarageSpaces || prev.garage,
-                            condition: property.PropertyCondition?.[0] || prev.condition,
-                            propertyType: property.PropertyType || prev.propertyType,
-                            // Add coordinates for distance calculations
-                            latitude: property.Latitude || prev.latitude,
-                            longitude: property.Longitude || prev.longitude
+                            city: data.city || prev.city,
+                            sqft: data.sqft || prev.sqft,
+                            basementSqft: data.belowGradeSqft || prev.basementSqft,
+                            yearBuilt: data.yearBuilt || prev.yearBuilt,
+                            beds: data.beds || prev.beds,
+                            baths: data.baths || prev.baths,
+                            garage: data.garage || prev.garage,
+                            condition: data.condition || prev.condition,
+                            propertyType: data.propertyType || prev.propertyType
                         }));
-                        setSearchMessage(`✅ Property details found and auto-filled! MLS #: ${property.ListingId}`);
+                        setSearchMessage(`✅ Property details found and auto-filled! MLS #: ${data.mlsNumber}`);
                         setPropertyDetailsError('');
                         // After auto-fill, fetch nearby comps and compute quick comparison stats
                         try {
-                            const radius = subjectProperty.radiusMiles || 2;
-                            const sqftDelta = subjectProperty.sqftDelta || 700;
-                            const params = new URLSearchParams({
-                                address: property.UnparsedAddress || subjectProperty.address,
-                                city: property.City || subjectProperty.city || '',
-                                radius_miles: radius,
-                                min_sqft: Math.max(0, (property.LivingArea || 0) - sqftDelta),
-                                max_sqft: (property.LivingArea || 0) + sqftDelta,
-                                limit: 20
-                            });
-
-                            // Add coordinates for distance calculations if available
-                            if (property.Latitude && property.Longitude) {
-                                params.set('latitude', property.Latitude);
-                                params.set('longitude', property.Longitude);
-                            }
-                            const compsResp = await fetch(`/api/property-search-new?${params.toString()}`);
+                            const radius = subjectProperty.radiusMiles || data.radiusMiles || 2;
+                            const sqftDelta = subjectProperty.sqftDelta || data.sqftDelta || 700;
+                            const params = new URLSearchParams({ address: data.address, city: data.city || subjectProperty.city || '', radius_miles: radius, sqft_delta: sqftDelta });
+                            const compsResp = await fetch(`/api/comps-from-address?${params.toString()}`);
                             if (compsResp.ok) {
                                 const compsData = await compsResp.json();
-                                const comps = compsData.properties || [];
+                                const comps = compsData.comps || [];
                                 if (comps.length > 0) {
-                                    const sqfts = comps.map(c => Number(c.LivingArea || 0)).filter(n => n > 0).sort((a, b) => a - b);
+                                    const sqfts = comps.map(c => Number(c.sqft || 0)).filter(n => n > 0).sort((a, b) => a - b);
                                     const avgSqft = sqfts.reduce((a, b) => a + b, 0) / sqfts.length;
                                     const medianSqft = sqfts.length % 2 === 1 ? sqfts[(sqfts.length - 1) / 2] : ((sqfts[sqfts.length / 2 - 1] + sqfts[sqfts.length / 2]) / 2);
-                                    const avgPPSF = comps.filter(c => c.ClosePrice && c.LivingArea && c.LivingArea > 0).reduce((acc, c) => acc + (c.ClosePrice / c.LivingArea), 0) / Math.max(1, comps.filter(c => c.ClosePrice && c.LivingArea && c.LivingArea > 0).length);
+                                    const avgPPSF = comps.filter(c => c.soldPrice && c.sqft && c.sqft > 0).reduce((acc, c) => acc + (c.soldPrice / c.sqft), 0) / Math.max(1, comps.filter(c => c.soldPrice && c.sqft && c.sqft > 0).length);
                                     const nearest = comps.filter(c => c.distance_miles !== undefined).sort((a, b) => a.distance_miles - b.distance_miles)[0];
                                     setComparisonSummary({ count: comps.length, avgSqft: Math.round(avgSqft), medianSqft: Math.round(medianSqft), avgPPSF: Math.round(avgPPSF || 0), nearestDistance: nearest ? Number(nearest.distance_miles.toFixed(2)) : null });
                                 } else {
@@ -583,122 +490,72 @@
             useEffect(() => {
                 //console.log('SubjectPropertyStep mounted');
 
-                // Function to initialize Google Places Autocomplete
-                const initializeAutocomplete = () => {
-                    if (window.google && window.google.maps && addressInputRef.current) {
-                        try {
-                            autocompleteRef.current = new window.google.maps.places.Autocomplete(
-                                addressInputRef.current,
-                                {
-                                    types: ['address'],
-                                    componentRestrictions: { country: 'us' },
-                                    fields: ['address_components', 'formatted_address', 'geometry']
-                                }
-                            );
-
-                            autocompleteRef.current.addListener('place_changed', () => {
-                                const place = autocompleteRef.current.getPlace();
-
-                                if (place.address_components) {
-                                    // Helper to find the first matching component for a list of types
-                                    const findComponent = (typesToCheck) => {
-                                        for (const comp of place.address_components) {
-                                            for (const t of typesToCheck) {
-                                                if (comp.types && comp.types.indexOf(t) !== -1) return comp.long_name;
-                                            }
-                                        }
-                                        return '';
-                                    };
-
-                                    const streetNumber = findComponent(['street_number']);
-                                    const route = findComponent(['route']);
-                                    // city can be returned under different component types depending on the place
-                                    const city = findComponent(['locality', 'postal_town', 'administrative_area_level_3', 'neighborhood', 'sublocality']) || '';
-                                    const state = findComponent(['administrative_area_level_1']);
-                                    const postal = findComponent(['postal_code']);
-
-                                    const address = ((streetNumber ? streetNumber + ' ' : '') + (route || '')).trim();
-                                    const fullGoogleAddress = place.formatted_address || address;
-
-                                    // Store what Google selected for potential manual override
-                                    setGoogleSelectedAddress(fullGoogleAddress);
-
-                                    // Check if Google selected a unit number that might be wrong
-                                    const hasUnit = /\s#\s?\d+/i.test(fullGoogleAddress) || /\bunit\s+\d+/i.test(fullGoogleAddress) || /\bapt\s+\d+/i.test(fullGoogleAddress);
-
-                                    if (hasUnit) {
-                                        setSearchMessage(`Address "${fullGoogleAddress}" contains a unit number. Use "Edit Address" if you need the main property instead.`);
-                                    }
-
-                                    setSubjectProperty(prev => ({
-                                        ...prev,
-                                        address: address || place.formatted_address || prev.address,
-                                        city: city || prev.city,
-                                        state: state || prev.state,
-                                        postalCode: postal || prev.postalCode,
-                                        // if geometry available, capture coords
-                                        ...(place.geometry && place.geometry.location ? { latitude: place.geometry.location.lat(), longitude: place.geometry.location.lng() } : {})
-                                    }));
-
-                                    // --- Auto-trigger property details fetch only if not in manual mode ---
-                                    if (!manualAddressMode) {
-                                        const searchAddress = (address || place.formatted_address || '').trim();
-                                        if (searchAddress) {
-                                            handlePropertyDetailsFromAddress(searchAddress);
-                                        }
-                                    }
-                                }
-                            });
-
-                            setGoogleMapsStatus('ready');
-                            console.log('Google Places Autocomplete initialized successfully');
-                        } catch (error) {
-                            console.error('Error initializing Google Places Autocomplete:', error);
-                            setGoogleMapsStatus('error');
-                            setSearchMessage('Google Maps autocomplete failed to initialize. You can still enter addresses manually.');
+                // Initialize Google Places Autocomplete
+                if (window.google && window.google.maps && addressInputRef.current) {
+                    autocompleteRef.current = new window.google.maps.places.Autocomplete(
+                        addressInputRef.current,
+                        {
+                            types: ['address'],
+                            componentRestrictions: { country: 'us' },
+                            fields: ['address_components', 'formatted_address', 'geometry']
                         }
-                    }
-                };
+                    );
 
-                // Check Google Maps loading status
-                const checkGoogleMapsStatus = () => {
-                    if (window.googleMapsLoaded) {
-                        // Google Maps loaded successfully
-                        setGoogleMapsStatus('ready');
-                        initializeAutocomplete();
-                    } else if (window.googleMapsError) {
-                        // Google Maps failed to load
-                        setGoogleMapsStatus('error');
-                        setSearchMessage('Google Maps is not available. Please enter addresses manually.');
-                        console.warn('Google Maps API failed to load');
-                    } else if (retryCount < 3) {
-                        // Still loading, retry after a delay
-                        setTimeout(() => {
-                            setRetryCount(prev => prev + 1);
-                            checkGoogleMapsStatus();
-                        }, 2000);
-                    } else {
-                        // Max retries reached
-                        setGoogleMapsStatus('unavailable');
-                        setSearchMessage('Google Maps is taking too long to load. Please enter addresses manually.');
-                        console.warn('Google Maps API loading timeout after retries');
-                    }
-                };
+                    autocompleteRef.current.addListener('place_changed', () => {
+                        const place = autocompleteRef.current.getPlace();
 
-                // Initial check
-                if (window.google && window.google.maps) {
-                    initializeAutocomplete();
-                } else {
-                    checkGoogleMapsStatus();
+                        if (place.address_components) {
+                            // Helper to find the first matching component for a list of types
+                            const findComponent = (typesToCheck) => {
+                                for (const comp of place.address_components) {
+                                    for (const t of typesToCheck) {
+                                        if (comp.types && comp.types.indexOf(t) !== -1) return comp.long_name;
+                                    }
+                                }
+                                return '';
+                            };
+
+                            const streetNumber = findComponent(['street_number']);
+                            const route = findComponent(['route']);
+                            // city can be returned under different component types depending on the place
+                            const city = findComponent(['locality', 'postal_town', 'administrative_area_level_3', 'neighborhood', 'sublocality']) || '';
+                            const state = findComponent(['administrative_area_level_1']);
+                            const postal = findComponent(['postal_code']);
+
+                            const address = ((streetNumber ? streetNumber + ' ' : '') + (route || '')).trim();
+                            const fullGoogleAddress = place.formatted_address || address;
+
+                            // Store what Google selected for potential manual override
+                            setGoogleSelectedAddress(fullGoogleAddress);
+
+                            // Check if Google selected a unit number that might be wrong
+                            const hasUnit = /\s#\s?\d+/i.test(fullGoogleAddress) || /\bunit\s+\d+/i.test(fullGoogleAddress) || /\bapt\s+\d+/i.test(fullGoogleAddress);
+
+                            if (hasUnit) {
+                                setSearchMessage(`Address "${fullGoogleAddress}" contains a unit number. Use "Edit Address" if you need the main property instead.`);
+                            }
+
+                            setSubjectProperty(prev => ({
+                                ...prev,
+                                address: address || place.formatted_address || prev.address,
+                                city: city || prev.city,
+                                state: state || prev.state,
+                                postalCode: postal || prev.postalCode,
+                                // if geometry available, capture coords
+                                ...(place.geometry && place.geometry.location ? { latitude: place.geometry.location.lat(), longitude: place.geometry.location.lng() } : {})
+                            }));
+
+                            // --- Auto-trigger property details fetch only if not in manual mode ---
+                            if (!manualAddressMode) {
+                                const searchAddress = (address || place.formatted_address || '').trim();
+                                if (searchAddress) {
+                                    handlePropertyDetailsFromAddress(searchAddress);
+                                }
+                            }
+                        }
+                    });
                 }
-
-                // Cleanup function
-                return () => {
-                    if (autocompleteRef.current) {
-                        window.google?.maps?.event?.clearInstanceListeners?.(autocompleteRef.current);
-                    }
-                };
-            }, [retryCount, manualAddressMode]);
+            }, []);
 
             const handleManualAddressOverride = () => {
                 setManualAddressMode(true);
@@ -769,46 +626,6 @@
                                         {manualAddressMode && (
                                             <span className="ml-2 text-xs bg-sky-100 text-sky-800 px-2 py-1 rounded">Editing</span>
                                         )}
-                                        {/* Google Maps Status Indicator */}
-                                        <span className={`ml-2 text-xs px-2 py-1 rounded flex items-center ${googleMapsStatus === 'ready' ? 'bg-green-100 text-green-800' :
-                                            googleMapsStatus === 'loading' ? 'bg-yellow-100 text-yellow-800' :
-                                                googleMapsStatus === 'error' ? 'bg-red-100 text-red-800' :
-                                                    'bg-gray-100 text-gray-800'
-                                            }`}>
-                                            {googleMapsStatus === 'ready' && (
-                                                <>
-                                                    <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                                                    </svg>
-                                                    Auto-fill ready
-                                                </>
-                                            )}
-                                            {googleMapsStatus === 'loading' && (
-                                                <>
-                                                    <svg className="w-3 h-3 mr-1 animate-spin" fill="none" viewBox="0 0 24 24">
-                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                                    </svg>
-                                                    Loading...
-                                                </>
-                                            )}
-                                            {googleMapsStatus === 'error' && (
-                                                <>
-                                                    <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                                                    </svg>
-                                                    Auto-fill unavailable
-                                                </>
-                                            )}
-                                            {googleMapsStatus === 'unavailable' && (
-                                                <>
-                                                    <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                                                    </svg>
-                                                    Manual entry only
-                                                </>
-                                            )}
-                                        </span>
                                     </label>
                                     <div className="relative">
                                         <input
@@ -823,11 +640,7 @@
                                                 ? 'border-sky-300 focus:border-sky-500 focus:ring-2 focus:ring-sky-200'
                                                 : 'border-gray-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200'
                                                 }`}
-                                            placeholder={
-                                                googleMapsStatus === 'ready' ? "🏠 Start typing an address..." :
-                                                    googleMapsStatus === 'loading' ? "🏠 Loading auto-complete..." :
-                                                        "🏠 Enter full address manually..."
-                                            }
+                                            placeholder="🏠 Start typing an address..."
                                         />
                                     </div>
 
@@ -845,34 +658,6 @@
                                                     </svg>
                                                     Edit Address
                                                 </button>
-                                                {(googleMapsStatus === 'error' || googleMapsStatus === 'unavailable') && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            // Reset Google Maps status and retry loading
-                                                            setGoogleMapsStatus('loading');
-                                                            setRetryCount(0);
-                                                            window.googleMapsLoaded = false;
-                                                            window.googleMapsError = false;
-
-                                                            // Reload Google Maps script
-                                                            const script = document.createElement('script');
-                                                            script.src = 'https://maps.googleapis.com/maps/api/js?key=AIzaSyABw7DX0sg8fmhPt9H6JdlIGO-GikNgWhI&libraries=places&callback=initGoogleMaps';
-                                                            script.async = true;
-                                                            script.defer = true;
-                                                            script.onerror = handleGoogleMapsError;
-                                                            document.head.appendChild(script);
-
-                                                            setSearchMessage('Retrying Google Maps connection...');
-                                                        }}
-                                                        className="text-xs bg-orange-100 hover:bg-orange-200 text-orange-800 px-3 py-1 rounded-full transition-colors flex items-center"
-                                                    >
-                                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                                        </svg>
-                                                        Retry Auto-fill
-                                                    </button>
-                                                )}
                                             </>
                                         ) : (
                                             <>
@@ -900,46 +685,6 @@
                                             </>
                                         )}
                                     </div>
-
-                                    {/* Google Maps Status Information */}
-                                    {googleMapsStatus !== 'ready' && (
-                                        <div className={`mt-3 p-3 rounded-lg text-sm ${googleMapsStatus === 'loading' ? 'bg-blue-50 border border-blue-200 text-blue-800' :
-                                            googleMapsStatus === 'error' ? 'bg-red-50 border border-red-200 text-red-800' :
-                                                'bg-gray-50 border border-gray-200 text-gray-800'
-                                            }`}>
-                                            {googleMapsStatus === 'loading' && (
-                                                <div className="flex items-center">
-                                                    <svg className="w-4 h-4 mr-2 animate-spin" fill="none" viewBox="0 0 24 24">
-                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                                    </svg>
-                                                    Loading Google Maps for address auto-completion...
-                                                </div>
-                                            )}
-                                            {googleMapsStatus === 'error' && (
-                                                <div className="flex items-start">
-                                                    <svg className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                                                    </svg>
-                                                    <div>
-                                                        <p className="font-medium">Google Maps auto-fill unavailable</p>
-                                                        <p className="text-xs mt-1">You can still enter addresses manually. The property search will work normally.</p>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {googleMapsStatus === 'unavailable' && (
-                                                <div className="flex items-start">
-                                                    <svg className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                                                    </svg>
-                                                    <div>
-                                                        <p className="font-medium">Manual address entry mode</p>
-                                                        <p className="text-xs mt-1">Enter the complete address manually. All property search features will work normally.</p>
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
                                 </div>
                                 <div className="space-y-2">
                                     <label htmlFor="city" className="flex items-center text-sm font-semibold text-gray-800">
@@ -1471,45 +1216,6 @@
         };
 
         const ComparablesStep = ({ subjectProperty, setSubjectProperty, selectedComps, setSelectedComps, prevStep, nextStep, showParametersModal, setShowParametersModal, showPropertyDetails }) => {
-            const [enrichingIds, setEnrichingIds] = useState([]);
-
-            const fetchPropertyDetails = async (address) => {
-                if (!address) return null;
-                try {
-                    const res = await fetch('/api/property-details-from-address', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ address })
-                    });
-                    if (!res.ok) return null;
-                    return await res.json();
-                } catch (e) { console.warn('detail fetch failed', address, e); return null; }
-            };
-
-            const enrichComp = async (comp) => {
-                if (!comp || comp.enriched || enrichingIds.includes(comp.id)) return;
-                setEnrichingIds(prev => [...prev, comp.id]);
-                const details = await fetchPropertyDetails(comp.address);
-                setEnrichingIds(prev => prev.filter(id => id !== comp.id));
-                if (details) {
-                    setSelectedComps(prev => prev.map(c => c.id === comp.id ? {
-                        ...c,
-                        enriched: true,
-                        bathsFull: details.BathroomsFull || details.BathsFull || details.bathsFull || c.bathsFull || 0,
-                        bathsHalf: details.BathroomsHalf || details.BathsHalf || details.bathsHalf || c.bathsHalf || 0,
-                        garage: details.GarageSpaces || details.GarageStalls || details.garage || c.garage,
-                        sqft: details.LivingArea || details.AboveGradeFinishedArea || details.sqft || c.sqft,
-                        basementSqft: details.BelowGradeFinishedArea || details.basementSqft || c.basementSqft,
-                        condition: (Array.isArray(details.PropertyCondition) && details.PropertyCondition[0]) || details.condition || c.condition,
-                        yearBuilt: details.YearBuilt || c.yearBuilt,
-                        beds: details.BedroomsTotal || details.beds || c.beds,
-                    } : c));
-                }
-            };
-
-            useEffect(() => {
-                selectedComps.forEach(c => { if (!c.enriched) enrichComp(c); });
-            }, [selectedComps]);
             useEffect(() => {
                 //console.log('ComparablesStep mounted');
                 setTimeout(() => {
@@ -1589,7 +1295,7 @@
 
                 // Apply filters
                 if (filterBy === 'similar_size' && subjectProperty.totalSqft) {
-                    const sizeTolerance = 500; // could make dynamic later
+                    const sizeTolerance = 500;
                     comps = comps.filter(comp =>
                         Math.abs((comp.totalSqft || comp.sqft || 0) - subjectProperty.totalSqft) <= sizeTolerance
                     );
@@ -1639,14 +1345,11 @@
                 return sortedAndFilteredComps;
             }, [sortedAndFilteredComps, viewMode, visibleCount]);
 
-            const toggleComp = (comp) => {
-                setSelectedComps(prev => {
-                    const exists = prev.some(c => c.id === comp.id);
-                    if (exists) return prev.filter(c => c.id !== comp.id);
-                    if (prev.length >= 5) return prev;
-                    return [...prev, comp];
-                });
-            };
+            const toggleComp = (comp) => setSelectedComps(prev =>
+                prev.find(c => c.id === comp.id)
+                    ? prev.filter(c => c.id !== comp.id)
+                    : [...prev, comp]
+            );
 
             const getConditionColor = (condition) => {
                 const conditionMap = {
@@ -2449,7 +2152,6 @@
             const [isExporting, setIsExporting] = useState(false);
 
             const avgPricePerSqft = useMemo(() => {
-                // Re-base PPSF on ABOVE-GRADE GLA only (industry norm) so a large basement doesn't drag value down.
                 try {
                     const soldCompPpsf = (selectedComps || [])
                         .filter(c => !c.isActive && c.sqft > 0 && (c.soldPrice || 0) > 0)
@@ -2463,7 +2165,7 @@
                         return subjectProperty.listPrice / subjectProperty.sqft;
                     }
                 } catch (e) { console.warn('avgPricePerSqft calc error', e); }
-                return 180; // fallback
+                return 180;
             }, [subjectProperty, selectedComps]);
 
             const adjustments = useMemo(() => selectedComps.map(comp => {
@@ -2478,7 +2180,6 @@
                 };
 
                 // Get numeric values for calculations
-                // Use above-grade finished area for primary GLA adjustment
                 const subjectSqft = getNumber(subjectProperty.sqft);
                 const compSqft = getNumber(comp.sqft);
                 const subjectBaths = getNumber(subjectProperty.baths);
@@ -2490,7 +2191,6 @@
                 const subjectBasement = getNumber(subjectProperty.basementSqft);
                 const compBasement = getNumber(comp.basementSqft);
 
-                // GLA (above-grade) adjustment
                 const sqftDiff = subjectSqft - compSqft;
                 if (sqftDiff !== 0 && avgPricePerSqft > 0) {
                     const glaAmount = sqftDiff * avgPricePerSqft;
@@ -2498,31 +2198,12 @@
                     totalAdjustment += glaAmount;
                 }
 
-                // Bathroom adjustment (prefer full/half if available)
-                const subjectFull = getNumber(subjectProperty.bathsFull);
-                const subjectHalf = getNumber(subjectProperty.bathsHalf);
-                const compFull = getNumber(comp.bathsFull);
-                const compHalf = getNumber(comp.bathsHalf);
-                if (subjectFull || subjectHalf || compFull || compHalf) {
-                    const fullDiff = subjectFull - compFull;
-                    if (fullDiff !== 0) {
-                        const amount = fullDiff * ADJUSTMENT_VALUES.BATH_FULL;
-                        adj.details.push({ feature: 'Bathrooms (Full)', adjustment: amount });
-                        totalAdjustment += amount;
-                    }
-                    const halfDiff = subjectHalf - compHalf;
-                    if (halfDiff !== 0) {
-                        const amount = halfDiff * ADJUSTMENT_VALUES.BATH_HALF;
-                        adj.details.push({ feature: 'Bathrooms (Half)', adjustment: amount });
-                        totalAdjustment += amount;
-                    }
-                } else {
-                    const bathDiff = subjectBaths - compBaths;
-                    if (bathDiff !== 0) {
-                        const amount = bathDiff * ADJUSTMENT_VALUES.BATH_FULL;
-                        adj.details.push({ feature: 'Bathrooms', adjustment: amount });
-                        totalAdjustment += amount;
-                    }
+                // Bathroom adjustment
+                const bathDiff = subjectBaths - compBaths;
+                if (bathDiff !== 0) {
+                    const amount = bathDiff * ADJUSTMENT_VALUES.BATH_FULL;
+                    adj.details.push({ feature: 'Bathrooms', adjustment: amount });
+                    totalAdjustment += amount;
                 }
 
                 // Bedroom adjustment
@@ -2541,7 +2222,6 @@
                     totalAdjustment += amount;
                 }
 
-                // Basement adjustment (value basement at 50% of above-grade PPSF if dynamic higher than static rule)
                 const basementDiff = subjectBasement - compBasement;
                 if (basementDiff !== 0) {
                     const dynamicBasementRate = Math.max(ADJUSTMENT_VALUES.BASEMENT_SQFT, avgPricePerSqft * 0.5);
@@ -2567,7 +2247,6 @@
 
             const finalValuation = useMemo(() => {
                 if (!adjustments.length) return 0;
-                // Weight comps by similarity (size & optionally distance) so closer matches influence more
                 let totalWeighted = 0, totalWeight = 0;
                 adjustments.forEach(adj => {
                     const comp = selectedComps.find(c => c.id === adj.id);
@@ -2575,10 +2254,10 @@
                     const subjectGLA = subjectProperty.sqft || 0;
                     const compGLA = comp.sqft || 0;
                     if (!subjectGLA || !compGLA) return;
-                    const sizeSimilarity = 1 / (1 + Math.abs(subjectGLA - compGLA) / subjectGLA); // 0..1
+                    const sizeSimilarity = 1 / (1 + Math.abs(subjectGLA - compGLA) / subjectGLA);
                     const distance = comp.distance_miles != null ? comp.distance_miles : null;
-                    const distanceFactor = distance == null ? 1 : 1 / (1 + distance); // nearer => higher weight
-                    const recencyFactor = comp.closeDate ? 1 : 0.9; // slight penalty if active (no closeDate)
+                    const distanceFactor = distance == null ? 1 : 1 / (1 + distance);
+                    const recencyFactor = comp.closeDate ? 1 : 0.9;
                     const weight = sizeSimilarity * distanceFactor * recencyFactor;
                     totalWeighted += adj.adjustedPrice * weight;
                     totalWeight += weight;

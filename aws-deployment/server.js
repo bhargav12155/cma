@@ -9,10 +9,20 @@ const fetch = (...args) =>
 
 // --- 2. Init App ---
 const app = express();
+// AWS Elastic Beanstalk uses dynamic port assignment
 const PORT = process.env.PORT || 3002;
 
 // --- 3. Middleware ---
-app.use(cors());
+// Enhanced CORS configuration for production
+app.use(
+  cors({
+    origin:
+      process.env.NODE_ENV === "production"
+        ? ["https://*.elasticbeanstalk.com", "https://*.amazonaws.com"]
+        : true,
+    credentials: true,
+  })
+);
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
@@ -84,12 +94,31 @@ const GEMINI_API_KEY = "AIzaSyACKfnIE47Ig4PZyzjygfV9VZxUKK0NPI0";
 
 // --- 5. Endpoints ---
 
+// Health check endpoint for AWS Load Balancer
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "OK",
+    timestamp: new Date().toISOString(),
+    message: "Enhanced CMA API is running with total square footage support",
+    version: "2.0.0",
+    features: [
+      "Bearer Token Authentication",
+      "Active Property Listings",
+      "Total Square Footage Filtering",
+      "Enhanced MLS Field Mapping",
+      "Above-Grade & Basement Sqft Support",
+    ],
+  });
+});
+
 // Root health
 app.get("/", (req, res) => {
   res.json({
-    message: "Simple CMA API is running",
+    message: "Enhanced CMA API is running",
     status: "healthy",
     timestamp: new Date().toISOString(),
+    version: "2.0.0",
+    deployment: process.env.NODE_ENV || "development",
   });
 });
 
@@ -391,7 +420,7 @@ app.get("/api/property-search", async (req, res) => {
         zipCode: property.PostalCode || "",
         listPrice: property.ListPrice || 0,
         soldPrice: property.ClosePrice || 0,
-        sqft: property.AboveGradeFinishedArea || 0, // Above-grade only
+        sqft: property.AboveGradeFinishedArea || property.LivingArea || 0,
         basementSqft: property.BelowGradeFinishedArea || 0,
         beds: property.BedroomsTotal || 0,
         baths: property.BathroomsTotalInteger || 0,
@@ -823,7 +852,6 @@ app.get("/api/cma-comparables", async (req, res) => {
       active: filteredActive,
       closed: filteredClosed,
       combined: [...filteredActive, ...filteredClosed], // For convenience
-      properties: [...filteredActive, ...filteredClosed], // For client compatibility
       meta: {
         activeQuery: activeUrl,
         closedQuery: closedUrl,
@@ -1018,245 +1046,795 @@ app.get("/api/comps", async (req, res) => {
   }
 });
 
-// New Property Search API for testing with wildcard support
-app.get("/api/property-search-new", async (req, res) => {
-  const {
-    // Property IDs
-    mls_number,
-    listing_id,
-
-    // Agent searches
-    buyer_agent_mls_id,
-    buyer_agent_name,
-    listing_agent_mls_id,
-    listing_agent_name,
-
-    // Location filters
-    address,
-    city,
-    state = "NE",
-    zip_code,
-    subdivision,
-    radius_miles = 5,
-
-    // Property specifications
-    min_sqft,
-    max_sqft,
-    above_grade_sqft,
-    basement_sqft,
-    total_sqft,
-
-    // Price filters
-    min_price,
-    max_price,
-
-    // Property details
-    min_year_built,
-    max_year_built,
-    bedrooms,
-    min_bedrooms,
-    max_bedrooms,
-    bathrooms,
-    min_bathrooms,
-    max_bathrooms,
-    garage_spaces,
-
-    // Property features
-    waterfront,
-    new_construction,
-    property_type,
-    property_condition,
-
-    // Status filters
-    status, // Active, Sold, Closed, etc.
-
-    // Sorting and pagination
-    sort_by = "ListPrice",
-    sort_order = "desc",
-    limit = 200,
-    offset = 0,
-  } = req.query;
-
+// New Bearer Token Property Search API - For Active Listings
+app.get("/api/properties/search", async (req, res) => {
   try {
-    console.log("New Property Search Request:", req.query);
+    const {
+      // Price range
+      minPrice,
+      maxPrice,
 
-    // Build filters
-    let filters = [];
+      // Property features
+      bedrooms,
+      bathrooms,
+      sqft, // Above-grade square footage
+      minSqft, // Minimum above-grade square footage
+      maxSqft, // Maximum above-grade square footage
+      totalSqft, // Total square footage (above-grade + basement)
+      minTotalSqft, // Minimum total square footage
+      maxTotalSqft, // Maximum total square footage
 
-    // Property ID filters
-    if (mls_number) filters.push(`ListingId eq '${mls_number}'`);
-    if (listing_id) filters.push(`ListingId eq '${listing_id}'`);
+      // Property type
+      propertyType, // House, Condo, Townhouse, etc.
 
-    // Agent filters with wildcard support
-    if (buyer_agent_mls_id)
-      filters.push(`BuyerAgentMlsId eq '${buyer_agent_mls_id}'`);
-    if (buyer_agent_name)
-      filters.push(
-        `contains(tolower(BuyerAgentFullName),'${buyer_agent_name.toLowerCase()}')`
-      );
-    if (listing_agent_mls_id)
-      filters.push(`ListAgentMlsId eq '${listing_agent_mls_id}'`);
-    if (listing_agent_name)
-      filters.push(
-        `contains(tolower(ListAgentFullName),'${listing_agent_name.toLowerCase()}')`
-      );
+      // Status
+      status = "Active", // Active, Pending, Sold
 
-    // Location filters
-    // For CMA searches, we don't want to filter by subject property address - we want comparable properties
-    // Only filter by address if it's not a CMA/comparable property search
-    if (address && !city) {
-      // If city is provided, assume it's a CMA search for comparables
-      filters.push(
-        `contains(tolower(UnparsedAddress),'${address.toLowerCase()}')`
-      );
+      // Location
+      city,
+      zipCode,
+
+      // Sorting
+      sortBy = "ListPrice",
+      sortOrder = "desc",
+
+      // Pagination
+      page = 1,
+      limit = 50,
+    } = req.query;
+
+    // Get Bearer token
+    const bearerToken = await getBearerToken();
+    if (!bearerToken) {
+      return res.status(500).json({
+        error: "Unable to authenticate with Paragon API",
+      });
     }
-    if (city) filters.push(`tolower(City) eq '${city.toLowerCase()}'`);
-    if (state)
-      filters.push(`tolower(StateOrProvince) eq '${state.toLowerCase()}'`);
-    if (zip_code) filters.push(`PostalCode eq '${zip_code}'`);
-    if (subdivision)
-      filters.push(
-        `contains(tolower(SubdivisionName),'${subdivision.toLowerCase()}')`
-      );
 
-    // Square footage filters
-    if (min_sqft) filters.push(`LivingArea ge ${min_sqft}`);
-    if (max_sqft) filters.push(`LivingArea le ${max_sqft}`);
-    if (above_grade_sqft)
-      filters.push(`AboveGradeFinishedArea eq ${above_grade_sqft}`);
-    if (basement_sqft)
-      filters.push(`BelowGradeFinishedArea eq ${basement_sqft}`);
-    if (total_sqft) filters.push(`BuildingAreaTotal eq ${total_sqft}`);
+    console.log("Property Search Request:", {
+      minPrice,
+      maxPrice,
+      bedrooms,
+      bathrooms,
+      sqft,
+      minSqft,
+      maxSqft,
+      totalSqft,
+      minTotalSqft,
+      maxTotalSqft,
+      propertyType,
+      status,
+      city,
+      zipCode,
+    });
+
+    // Build query parameters for new Platform API
+    const searchParams = new URLSearchParams();
+
+    // Build filter conditions
+    let filterConditions = [];
 
     // Price filters
-    if (min_price) filters.push(`ListPrice ge ${min_price}`);
-    if (max_price) filters.push(`ListPrice le ${max_price}`);
+    if (minPrice) {
+      filterConditions.push(`ListPrice ge ${minPrice}`);
+    }
+    if (maxPrice) {
+      filterConditions.push(`ListPrice le ${maxPrice}`);
+    }
 
-    // Year built filters
-    if (min_year_built) filters.push(`YearBuilt ge ${min_year_built}`);
-    if (max_year_built) filters.push(`YearBuilt le ${max_year_built}`);
+    // Bedroom filter
+    if (bedrooms) {
+      filterConditions.push(`BedroomsTotal ge ${bedrooms}`);
+    }
 
-    // Bedroom filters
-    if (bedrooms) filters.push(`BedroomsTotal eq ${bedrooms}`);
-    if (min_bedrooms) filters.push(`BedroomsTotal ge ${min_bedrooms}`);
-    if (max_bedrooms) filters.push(`BedroomsTotal le ${max_bedrooms}`);
+    // Bathroom filter
+    if (bathrooms) {
+      filterConditions.push(`BathroomsTotalInteger ge ${bathrooms}`);
+    }
 
-    // Bathroom filters
-    if (bathrooms) filters.push(`BathroomsTotalInteger eq ${bathrooms}`);
-    if (min_bathrooms)
-      filters.push(`BathroomsTotalInteger ge ${min_bathrooms}`);
-    if (max_bathrooms)
-      filters.push(`BathroomsTotalInteger le ${max_bathrooms}`);
+    // Above-grade square footage filters
+    if (sqft) {
+      filterConditions.push(`AboveGradeFinishedArea ge ${sqft}`);
+    }
+    if (minSqft) {
+      filterConditions.push(`AboveGradeFinishedArea ge ${minSqft}`);
+    }
+    if (maxSqft) {
+      filterConditions.push(`AboveGradeFinishedArea le ${maxSqft}`);
+    }
 
-    // Other property filters
-    if (garage_spaces) filters.push(`GarageSpaces eq ${garage_spaces}`);
-    if (waterfront)
-      filters.push(`WaterfrontYN eq ${waterfront.toLowerCase() === "true"}`);
-    if (new_construction)
-      filters.push(
-        `NewConstructionYN eq ${new_construction.toLowerCase() === "true"}`
+    // Total building area filters (when API supports it directly)
+    if (totalSqft) {
+      filterConditions.push(`BuildingAreaTotal ge ${totalSqft}`);
+    }
+    if (minTotalSqft) {
+      filterConditions.push(`BuildingAreaTotal ge ${minTotalSqft}`);
+    }
+    if (maxTotalSqft) {
+      filterConditions.push(`BuildingAreaTotal le ${maxTotalSqft}`);
+    }
+
+    // Property type filter
+    if (propertyType) {
+      filterConditions.push(`PropertyType eq '${propertyType}'`);
+    }
+
+    // Status filter (default to Active for live listings)
+    filterConditions.push(`StandardStatus eq '${status}'`);
+
+    // Location filters
+    if (city) {
+      filterConditions.push(`City eq '${city}'`);
+    }
+
+    if (zipCode) {
+      filterConditions.push(`PostalCode eq '${zipCode}'`);
+    }
+
+    // Combine all filters
+    if (filterConditions.length > 0) {
+      searchParams.append("$filter", filterConditions.join(" and "));
+    }
+
+    // Sorting
+    searchParams.append("$orderby", `${sortBy} ${sortOrder}`);
+
+    // Pagination
+    const skip = (page - 1) * limit;
+    searchParams.append("$skip", skip.toString());
+    searchParams.append("$top", limit.toString());
+
+    // Make request to new Platform API
+    const apiUrl = `${
+      paragonApiConfig.platformApiUrl
+    }/properties?${searchParams.toString()}`;
+
+    console.log("API Request URL:", apiUrl);
+
+    const response = await fetch(apiUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${bearerToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      console.error(
+        "API Response Error:",
+        response.status,
+        response.statusText
       );
-    if (property_type) filters.push(`PropertyType eq '${property_type}'`);
-    if (property_condition)
-      filters.push(
-        `contains(tolower(PropertyCondition),'${property_condition.toLowerCase()}')`
-      );
+      const errorText = await response.text();
+      console.error("Error details:", errorText);
+      return res.status(response.status).json({
+        error: `Paragon API error: ${response.status} ${response.statusText}`,
+        details: errorText,
+      });
+    }
 
-    // Status filters - REMOVED: Now returns ALL properties regardless of status
-    // This allows the frontend to get active, sold, expired, cancelled, etc. all together
-    // if (status) { ... } - Status filtering disabled for comprehensive results
-
-    const filterQuery = filters.length
-      ? `$filter=${encodeURIComponent(filters.join(" and "))}`
-      : "";
-    const url = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?access_token=${paragonApiConfig.serverToken}&$top=${limit}&$skip=${offset}&$orderby=${sort_by} ${sort_order}&${filterQuery}`;
-
-    console.log("API URL:", url);
-
-    const response = await fetch(url);
     const data = await response.json();
 
-    // Process properties to add computed fields like imageUrl, distance_miles, etc.
-    const processedProperties = (data.value || []).map((prop, index) => {
-      // Calculate distance if coordinates are provided
-      let distance_miles = null;
-      if (
-        prop.Latitude &&
-        prop.Longitude &&
-        req.query.latitude &&
-        req.query.longitude
-      ) {
-        distance_miles = haversineMiles(
-          parseFloat(req.query.latitude),
-          parseFloat(req.query.longitude),
-          parseFloat(prop.Latitude),
-          parseFloat(prop.Longitude)
-        );
-      }
-
-      // Determine if property is active
-      const isActive = prop.StandardStatus === "Active";
-
-      // Extract square footage - use AboveGradeFinishedArea as primary
-      const sqftValue = prop.AboveGradeFinishedArea || prop.LivingArea || 0;
-
-      // Calculate price and price per sqft
-      const price = isActive ? prop.ListPrice : prop.ClosePrice;
-      const totalSqft = sqftValue + (prop.BelowGradeFinishedArea || 0);
-      const pricePerSqft =
-        price && totalSqft ? Math.round(price / totalSqft) : 0;
-
-      return {
-        id: prop.ListingKey,
-        address: prop.UnparsedAddress,
-        city: prop.City,
-        listPrice: prop.ListPrice,
-        soldPrice: prop.ClosePrice,
-        sqft: sqftValue,
-        basementSqft: prop.BelowGradeFinishedArea,
-        totalSqft,
-        beds: prop.BedroomsTotal,
-        baths: prop.BathroomsTotalInteger || prop.BathroomsTotal,
-        garage: prop.GarageSpaces,
-        yearBuilt: prop.YearBuilt,
-        status: prop.StandardStatus,
-        closeDate: prop.CloseDate,
-        onMarketDate: prop.OnMarketDate,
-        pricePerSqft,
-        propertyType: prop.PropertyType,
-        condition:
-          Array.isArray(prop.PropertyCondition) &&
-          prop.PropertyCondition.length > 0
-            ? prop.PropertyCondition[0]
-            : "Average",
-        style:
-          Array.isArray(prop.ArchitecturalStyle) &&
-          prop.ArchitecturalStyle.length > 0
-            ? prop.ArchitecturalStyle[0]
-            : "",
-        subdivision: prop.SubdivisionName || "",
-        latitude: prop.Latitude,
-        longitude: prop.Longitude,
-        distance_miles,
-        isActive,
-        imageUrl:
-          prop.Media && prop.Media.length > 0
-            ? prop.Media[0].MediaURL
-            : "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzllYTNhOCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPk5vIFBob3RvPC90ZXh0Pjwvc3ZnPg==",
-      };
+    console.log("API Response received:", {
+      count: data.value ? data.value.length : 0,
+      hasNextLink: !!data["@odata.nextLink"],
     });
+
+    // Transform data for consistent response format
+    const properties = data.value
+      ? data.value.map((property) => ({
+          id: property.ListingKey,
+          address: `${
+            property.UnparsedAddress ||
+            property.StreetNumber + " " + property.StreetName
+          }, ${property.City}, ${property.StateOrProvince} ${
+            property.PostalCode
+          }`,
+          price: property.ListPrice,
+          bedrooms: property.BedroomsTotal,
+          bathrooms: property.BathroomsTotalInteger,
+          sqft: property.AboveGradeFinishedArea || property.LivingArea || 0,
+          basementSqft: property.BelowGradeFinishedArea || 0,
+          totalSqft:
+            property.BuildingAreaTotal ||
+            (property.AboveGradeFinishedArea || property.LivingArea || 0) +
+              (property.BelowGradeFinishedArea || 0),
+          propertyType: property.PropertyType,
+          status: property.StandardStatus,
+          listDate: property.ListingContractDate,
+          photoUrl:
+            property.PhotosCount > 0
+              ? `${paragonApiConfig.platformApiUrl}/media/${property.ListingKey}/photo/1`
+              : null,
+          description: property.PublicRemarks,
+          lotSize: property.LotSizeAcres,
+          yearBuilt: property.YearBuilt,
+          city: property.City,
+          zipCode: property.PostalCode,
+          mlsNumber: property.MLSNumber || property.ListingId,
+        }))
+      : [];
+
+    // Post-process filtering for total square footage as fallback
+    // (only needed if BuildingAreaTotal filtering wasn't applied at API level)
+    let filteredProperties = properties;
+
+    // Only do post-processing if we have total sqft filters but couldn't apply them at API level
+    const needsPostProcessing =
+      (totalSqft || minTotalSqft || maxTotalSqft) &&
+      properties.some(
+        (p) => !p.totalSqft || p.totalSqft === p.sqft + p.basementSqft
+      );
+
+    if (needsPostProcessing) {
+      filteredProperties = properties.filter((property) => {
+        const total = property.totalSqft;
+
+        if (totalSqft && total < totalSqft) return false;
+        if (minTotalSqft && total < minTotalSqft) return false;
+        if (maxTotalSqft && total > maxTotalSqft) return false;
+
+        return true;
+      });
+    }
 
     res.json({
       success: true,
-      count: processedProperties.length,
-      totalAvailable: data["@odata.count"] || "unknown",
-      properties: processedProperties,
-      searchFilters: req.query,
-      apiUrl: url.replace(paragonApiConfig.serverToken, "***"), // Hide token in response
+      count: filteredProperties.length,
+      properties: filteredProperties,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        hasMore: !!data["@odata.nextLink"],
+      },
+      searchCriteria: {
+        minPrice: minPrice ? parseInt(minPrice) : null,
+        maxPrice: maxPrice ? parseInt(maxPrice) : null,
+        bedrooms: bedrooms ? parseInt(bedrooms) : null,
+        bathrooms: bathrooms ? parseInt(bathrooms) : null,
+        sqft: sqft ? parseInt(sqft) : null,
+        minSqft: minSqft ? parseInt(minSqft) : null,
+        maxSqft: maxSqft ? parseInt(maxSqft) : null,
+        totalSqft: totalSqft ? parseInt(totalSqft) : null,
+        minTotalSqft: minTotalSqft ? parseInt(minTotalSqft) : null,
+        maxTotalSqft: maxTotalSqft ? parseInt(maxTotalSqft) : null,
+        propertyType,
+        status,
+        city,
+        zipCode,
+      },
     });
   } catch (error) {
-    console.error("Error in /api/property-search-new:", error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error("Property search error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: error.message,
+      details: process.env.NODE_ENV === "development" ? error.stack : undefined,
+    });
+  }
+});
+
+// Helper: Haversine distance in miles between two lat/lon pairs
+function haversineMiles(lat1, lon1, lat2, lon2) {
+  const toRad = (v) => (v * Math.PI) / 180;
+  const R = 3958.8; // Earth radius in miles
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+// Helper: attempt to find a subject property using multiple normalization strategies
+async function findSubjectProperty(address, city) {
+  if (!address) return null;
+  // Basic sanitation
+  const sanitize = (s) => s.replace(/'/g, "");
+  const base = sanitize(address.trim());
+  const addrLower = base.toLowerCase();
+  const variants = new Set();
+  variants.add(addrLower);
+  // Expand common suffix abbreviations
+  const suffixMap = {
+    " st": " street",
+    " rd": " road",
+    " ave": " avenue",
+    " blvd": " boulevard",
+    " dr": " drive",
+    " ln": " lane",
+    " ct": " court",
+    " cir": " circle",
+    " ter": " terrace",
+    " pl": " place",
+  };
+  for (const [abbr, full] of Object.entries(suffixMap)) {
+    if (addrLower.endsWith(abbr)) variants.add(addrLower.replace(abbr, full));
+    if (addrLower.endsWith(full)) variants.add(addrLower.replace(full, abbr));
+  }
+  // Directional normalization (s -> s, south)
+  if (/\b s \b/.test(` ${addrLower} `))
+    variants.add(addrLower.replace(/\b s \b/, " south "));
+  if (/\b south \b/.test(` ${addrLower} `))
+    variants.add(addrLower.replace(/\b south \b/, " s "));
+
+  // Try exact UnparsedAddress matches first
+  for (const v of variants) {
+    // Attempt direct case-sensitive match first
+    const directFilter = `$filter=UnparsedAddress eq '${base}'`;
+    const lowerFilter = `$filter=tolower(UnparsedAddress) eq '${v}'`;
+    const attempts = [directFilter, lowerFilter];
+    for (const filter of attempts) {
+      const searchUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?${filter}&$top=3`;
+      try {
+        const resp = await fetch(searchUrl, {
+          headers: { Authorization: `Bearer ${paragonApiConfig.serverToken}` },
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.value && data.value.length) {
+            const p = data.value[0];
+
+            return {
+              address: p.UnparsedAddress || p.Address || base,
+              city: p.City || city,
+              sqft: Number(p.LivingArea || p.AboveGradeFinishedArea || 0),
+              latitude: Number(p.Latitude || 0),
+              longitude: Number(p.Longitude || 0),
+              yearBuilt: Number(p.YearBuilt || 0),
+              beds: Number(p.BedroomsTotal || 0),
+              baths: Number(p.BathroomsTotalDecimal || p.BathroomsTotal || 0),
+              raw: p,
+            };
+          }
+        }
+      } catch (e) {
+        //console.log("[SUBJECT] Variant search error", e.message);
+      }
+    }
+  }
+
+  // Partial strategies: number + remainder
+  const numberMatch = base.match(/^(\d+)/);
+  if (numberMatch) {
+    const num = numberMatch[1];
+    const remainder = sanitize(base.slice(num.length).trim().toLowerCase());
+    if (remainder.length > 3) {
+      // Use substringof (OData v2) or contains - try substringof first
+      const partials = [
+        `$filter=StreetNumber eq '${num}' and substringof('${remainder}', tolower(UnparsedAddress)) eq true`,
+        `$filter=substringof('${remainder}', tolower(UnparsedAddress)) eq true`,
+      ];
+      for (const f of partials) {
+        const url = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?${f}&$top=5`;
+        try {
+          const resp = await fetch(url, {
+            headers: {
+              Authorization: `Bearer ${paragonApiConfig.serverToken}`,
+            },
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.value && data.value.length) {
+              const p = data.value[0];
+
+              return {
+                address: p.UnparsedAddress || p.Address || base,
+                city: p.City || city,
+                sqft: Number(p.LivingArea || p.AboveGradeFinishedArea || 0),
+                latitude: Number(p.Latitude || 0),
+                longitude: Number(p.Longitude || 0),
+                yearBuilt: Number(p.YearBuilt || 0),
+                beds: Number(p.BedroomsTotal || 0),
+                baths: Number(p.BathroomsTotalDecimal || p.BathroomsTotal || 0),
+                raw: p,
+              };
+            }
+          }
+        } catch (e) {
+          console.log("[SUBJECT] Partial search error", e.message);
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// Comps-from-address endpoint: find subject by address, then search comps nearby and within sqft delta
+app.get("/api/comps-from-address", async (req, res) => {
+  //console.log("Received comps-from-address request:", req.query);
+
+  if (paragonApiConfig.serverToken === "YOUR_SERVER_TOKEN_HERE") {
+    return res.status(500).json({
+      message: "Server configuration error",
+      details: "Paragon Server Token not configured.",
+    });
+  }
+
+  try {
+    const address = req.query.address || "";
+    const city = req.query.city || "";
+    // New: optional comma-separated postal codes list to broaden comps search
+    const postalCodesRaw =
+      req.query.postalCodes || req.query.postal_codes || req.query.zips || "";
+    const postalCodes = String(postalCodesRaw)
+      .split(/[,;\s]+/)
+      .map((z) => z.trim())
+      .filter((z) => z.length >= 4);
+    let radiusMiles = parseFloat(
+      req.query.radius_miles || req.query.radiusMiles || 2
+    );
+    let sqftDelta = parseInt(
+      req.query.sqft_delta || req.query.sqftDelta || 700,
+      10
+    );
+    const minResults = parseInt(req.query.min_results || 5, 10) || 5;
+
+    if (!address && !city) {
+      return res
+        .status(400)
+        .json({ message: "address or city parameter required" });
+    }
+
+    // Step 1: try to find the subject property by address (reuse property-search logic)
+    let subject = await findSubjectProperty(address, city);
+    // if (subject) {
+    //   console.log(
+    //     `[COMPS] Subject property found. Address='${subject.address}' sqft=${subject.sqft} lat=${subject.latitude} lon=${subject.longitude}`
+    //   );
+    // } else {
+    //   console.log(
+    //     `[COMPS] Subject not found for '${address}'. Provide ?sqft=#### to improve range.`
+    //   );
+    // }
+
+    // If subject not found, fall back to using provided city and sqft if available
+    const subjectSqft = subject
+      ? subject.sqft
+      : req.query.sqft
+      ? Number(req.query.sqft)
+      : 0;
+
+    // Build OData query using city and sqft window
+    let sqft_min = Math.max(0, (subjectSqft || 0) - sqftDelta);
+    let sqft_max = (subjectSqft || 0) + sqftDelta || sqftDelta || 2000;
+    // If we still have no subject sqft (0) and user didn't pass sqft, broaden range to avoid overly narrow query
+    if (!subjectSqft) {
+      sqft_min = 0;
+      sqft_max = Math.max(2500, sqftDelta * 5); // broaden search so we can later infer typical size
+      // console.log(
+      //   `[COMPS] Broadening sqft window due to missing subject size -> [${sqft_min}, ${sqft_max}]`
+      // );
+    }
+    // console.log(
+    //   `[COMPS] Computed sqft window subjectSqft=${subjectSqft} delta=${sqftDelta} -> range [${sqft_min}, ${sqft_max}] radius=${radiusMiles}mi minResults=${minResults}`
+    // );
+    let areaClause = `LivingArea ge ${sqft_min} and LivingArea le ${sqft_max}`;
+    let locationClause = city ? `City eq '${city}'` : "";
+    if (postalCodes.length) {
+      const orZip = postalCodes
+        .slice(0, 10) // cap to avoid overly long filters
+        .map((z) => `PostalCode eq '${z.replace(/'/g, "").trim()}'`)
+        .join(" or ");
+      const zipGroup = `(${orZip})`;
+      locationClause = locationClause
+        ? `${locationClause} and ${zipGroup}`
+        : zipGroup;
+      // //console.log(
+      //   `[COMPS] Applying postalCodes filter: ${postalCodes.join(",")}`
+      // );
+    }
+    const conditions = [
+      "StandardStatus eq 'Closed'",
+      locationClause,
+      areaClause,
+    ]
+      .filter(Boolean)
+      .join(" and ");
+    const odataFilterComps = `$filter=${conditions}`;
+    const compsUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?${odataFilterComps}&$top=200`;
+
+    const compsResp = await fetch(compsUrl, {
+      headers: {
+        Authorization: `Bearer ${paragonApiConfig.serverToken}`,
+        "Content-Type": "application/json",
+      },
+    });
+    if (!compsResp.ok) {
+      console.error("Comps fetch failed:", await compsResp.text());
+      throw new Error("Comps fetch failed");
+    }
+    const compsData = await compsResp.json();
+    const listings = compsData.value || [];
+
+    // Map and filter by distance if we have subject coordinates
+    const mapped = listings.map((record) => ({
+      id: record.ListingKey || record.PropertyId || record.id,
+      address:
+        record.UnparsedAddress ||
+        record.Address ||
+        `${record.StreetNumber} ${record.StreetName}`,
+      city: record.City,
+      soldPrice: Number(record.ClosePrice || record.ListPrice || 0),
+      listPrice: Number(record.ListPrice || 0),
+      sqft: Number(record.LivingArea || record.AboveGradeFinishedArea || 0),
+      beds: Number(record.BedroomsTotal || 0),
+      baths: Number(record.BathroomsTotalDecimal || record.BathroomsTotal || 0),
+      garage: Number(
+        record.GarageSpaces || record.ParkingTotal || record.CoveredSpaces || 0
+      ),
+      yearBuilt: Number(record.YearBuilt || 0),
+      latitude: Number(record.Latitude || 0),
+      longitude: Number(record.Longitude || 0),
+      imageUrl:
+        record.Media && record.Media.length > 0
+          ? record.Media[0].MediaURL
+          : record.Photos && record.Photos.length > 0
+          ? record.Photos[0].url
+          : "",
+      raw: record,
+    }));
+
+    let filtered = mapped;
+    if (subject && subject.latitude && subject.longitude) {
+      filtered = mapped
+        .filter((m) => m.latitude && m.longitude)
+        .map((m) => ({
+          ...m,
+          distance_miles: haversineMiles(
+            subject.latitude,
+            subject.longitude,
+            m.latitude,
+            m.longitude
+          ),
+        }))
+        .filter((m) => m.distance_miles <= radiusMiles)
+        .sort((a, b) => a.distance_miles - b.distance_miles);
+
+      // If not enough results, expand the radius until we have minResults or hit 20 miles
+      let currentRadius = radiusMiles;
+      while (filtered.length < minResults && currentRadius < 20) {
+        currentRadius = currentRadius * 2;
+        filtered = mapped
+          .filter((m) => m.latitude && m.longitude)
+          .map((m) => ({
+            ...m,
+            distance_miles: haversineMiles(
+              subject.latitude,
+              subject.longitude,
+              m.latitude,
+              m.longitude
+            ),
+          }))
+          .filter((m) => m.distance_miles <= currentRadius)
+          .sort((a, b) => a.distance_miles - b.distance_miles);
+      }
+    }
+
+    // If still no coords or filtered is empty, fall back to city-based results
+    if (
+      (!subject || !subject.latitude || !subject.longitude) &&
+      (!filtered || filtered.length === 0)
+    ) {
+      // take top N by recency/price
+      filtered = mapped.slice(0, Math.min(20, mapped.length));
+    }
+
+    if (filtered.length) {
+      const sample = filtered
+        .slice(0, 3)
+        .map((c) => ({ id: c.id, sqft: c.sqft, dist: c.distance_miles }));
+      // console.log("[COMPS] Sample comps:", sample);
+    }
+
+    res.json({
+      subject: subject || null,
+      params: { radiusMiles, sqftDelta, sqft_min, sqft_max },
+      comps: filtered,
+    });
+  } catch (err) {
+    console.error("comps-from-address error:", err);
+    res.status(500).json({
+      message: "Failed to fetch comps from address.",
+      details: err.message,
+    });
+  }
+});
+
+// Property search endpoint - search for a specific property by address
+app.get("/api/property-search", async (req, res) => {
+  // console.log("Received request for property search with query:", req.query);
+
+  // Check if server token is configured
+  if (paragonApiConfig.serverToken === "YOUR_SERVER_TOKEN_HERE") {
+    console.error("Server token not configured!");
+    return res.status(500).json({
+      message: "Server configuration error",
+      details: "Paragon Server Token not configured.",
+    });
+  }
+
+  try {
+    const { address } = req.query;
+    const debug = req.query.debug === "1" || req.query.debug === "true";
+
+    if (!address) {
+      return res.status(400).json({
+        message: "Address parameter is required",
+      });
+    }
+
+    // Use tolower to work around API case-sensitivity as per Paragon docs
+    const odataFilter = `$filter=tolower(UnparsedAddress) eq '${address.toLowerCase()}'`;
+    const searchUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?${odataFilter}&$top=5`;
+
+    // console.log("Making property search request to:", searchUrl);
+
+    // Fetch property using Server Token authentication
+    const propertyResponse = await fetch(searchUrl, {
+      headers: {
+        Authorization: `Bearer ${paragonApiConfig.serverToken}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    //console.log("Property search response status:", propertyResponse.status);
+
+    if (!propertyResponse.ok) {
+      console.error(
+        "Property search error response:",
+        await propertyResponse.text()
+      );
+      throw new Error(`Property search failed (${propertyResponse.status})`);
+    }
+
+    const propertyData = await propertyResponse.json();
+    const properties = propertyData.value || [];
+    // console.log(`Found ${properties.length} properties matching address.`);
+
+    let property = properties[0];
+
+    if (!property) {
+      try {
+        const variant = await findSubjectProperty(address, "");
+        if (variant && variant.raw) {
+          property = variant.raw;
+        }
+      } catch (e) {
+        console.log("[PROPERTY-SEARCH] Variant strategy error:", e.message);
+      }
+    }
+
+    if (!property) {
+      return res.json({
+        found: false,
+        message: "No property found with that address",
+        suggestions:
+          "Try adding direction (e.g., 'South') or a full suffix (Street) or supply ?sqft=#### manually.",
+        attempted: debug ? { directFilter: odataFilter } : undefined,
+      });
+    }
+
+    // Format the first matching or fallback-found property with comprehensive details
+    const formattedProperty = {
+      found: true,
+      id: property.ListingKey || property.PropertyId,
+      address: property.UnparsedAddress || property.Address,
+      city: property.City,
+      state: property.StateOrProvince,
+      postalCode: property.PostalCode,
+      status: property.StandardStatus,
+
+      // Property details
+      sqft: Number(property.LivingArea || property.AboveGradeFinishedArea || 0),
+      aboveGradeSqft: Number(property.AboveGradeFinishedArea || 0),
+      belowGradeSqft: Number(property.BelowGradeFinishedArea || 0),
+      beds: Number(property.BedroomsTotal || 0),
+      baths: Number(
+        property.BathroomsTotalDecimal || property.BathroomsTotal || 0
+      ),
+      bathsFull: Number(property.BathroomsFull || 0),
+      bathsHalf: Number(property.BathroomsHalf || 0),
+      garage: Number(
+        property.GarageSpaces ||
+          property.ParkingTotal ||
+          property.CoveredSpaces ||
+          0
+      ),
+      yearBuilt: Number(property.YearBuilt || 0),
+
+      // Financial data
+      listPrice: Number(property.ListPrice || 0),
+      originalListPrice: Number(property.OriginalListPrice || 0),
+      soldPrice: Number(property.ClosePrice || 0),
+      pricePerSqft:
+        property.ListPrice && property.LivingArea && property.LivingArea > 0
+          ? Math.round(property.ListPrice / property.LivingArea)
+          : 0,
+      taxAssessedValue: Number(property.TaxAssessedValue || 0),
+      taxAnnualAmount: Number(property.TaxAnnualAmount || 0),
+
+      // Property characteristics
+      propertyType: property.PropertyType || "",
+      propertySubType: property.PropertySubType || "",
+      lotSizeAcres: Number(property.LotSizeAcres || 0),
+      lotSizeSquareFeet: Number(property.LotSizeSquareFeet || 0),
+      stories: Number(property.StoriesTotal || 0),
+      condition:
+        property.PropertyCondition && property.PropertyCondition.length > 0
+          ? property.PropertyCondition[0]
+          : "",
+
+      // Systems and features
+      heating: property.Heating || "",
+      cooling: property.Cooling || "",
+      appliances: property.Appliances || "",
+      flooring: property.Flooring || "",
+      basement: property.Basement || "",
+      fireplace: Number(property.FireplacesTotal || 0),
+      pool: property.PoolPrivateYN || false,
+      waterfront: property.WaterfrontYN || false,
+
+      // School information
+      schoolElementary: property.ElementarySchool || "",
+      schoolMiddle: property.MiddleOrJuniorSchool || "",
+      schoolHigh: property.HighSchool || "",
+
+      // Listing details
+      mlsNumber: property.ListingId || "",
+      daysOnMarket: Number(
+        property.DaysOnMarket || property.CumulativeDaysOnMarket || 0
+      ),
+      onMarketDate: property.OnMarketDate || "",
+      listAgent: {
+        name: property.ListAgentFullName || "",
+        phone: property.ListAgentPreferredPhone || "",
+        email: property.ListAgentEmail || "",
+        mlsId: property.ListAgentMlsId || "",
+      },
+
+      // Media
+      imageUrl:
+        property.Media && property.Media.length > 0
+          ? property.Media[0].MediaURL
+          : property.Photos && property.Photos.length > 0
+          ? property.Photos[0].url
+          : "",
+      images: property.Media ? property.Media.map((m) => m.MediaURL) : [],
+      virtualTour:
+        property.VirtualTourURLBranded ||
+        property.VirtualTourURLUnbranded ||
+        "",
+
+      // Location
+      coordinates: property.Coordinates || "",
+      latitude: Number(property.Latitude || 0),
+      longitude: Number(property.Longitude || 0),
+
+      // Additional details
+      publicRemarks: property.PublicRemarks || "",
+      buildingFeatures: property.BuildingFeatures || "",
+      exteriorFeatures: property.ExteriorFeatures || "",
+      interiorFeatures: property.InteriorFeatures || "",
+      architecturalStyle: property.ArchitecturalStyle || "",
+      utilities: property.Utilities || "",
+
+      // Raw data for debugging
+      rawData: property,
+    };
+
+    res.json(formattedProperty);
+  } catch (error) {
+    console.error("Property search error:", error);
+    res.status(500).json({
+      message: "Failed to search for property.",
+      details: error.message,
+    });
   }
 });
 
@@ -1439,24 +2017,7 @@ app.post("/api/property-details-from-address", async (req, res) => {
     console.log("Subdivision:", details.SubdivisionName);
     console.log("Style:", details.ArchitecturalStyle);
 
-    // Map the square footage fields correctly
-    const mappedDetails = {
-      ...details,
-      // Override the square footage fields with correct mapping
-      sqft: details.AboveGradeFinishedArea || 0, // Above-grade only
-      basementSqft: details.BelowGradeFinishedArea || 0,
-      totalSqft:
-        details.BuildingAreaTotal ||
-        (details.AboveGradeFinishedArea || 0) +
-          (details.BelowGradeFinishedArea || 0),
-    };
-
-    console.log("Mapped square footage:");
-    console.log("- Above-grade (sqft):", mappedDetails.sqft);
-    console.log("- Basement (basementSqft):", mappedDetails.basementSqft);
-    console.log("- Total (totalSqft):", mappedDetails.totalSqft);
-
-    return res.json(mappedDetails);
+    return res.json(details);
   } catch (err) {
     console.error("Error fetching property details:", err.message);
     return res.status(500).json({ error: "Failed to fetch property details" });
@@ -1499,23 +2060,19 @@ app.post("/api/generate-text", async (req, res) => {
   }
 });
 
-// Haversine formula to calculate distance between two coordinates in miles
-function haversineMiles(lat1, lon1, lat2, lon2) {
-  const toRad = (v) => (v * Math.PI) / 180;
-  const R = 3958.8; // Earth radius in miles
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
-
 // --- 6. Start ---
-app.listen(PORT, () =>
-  console.log(`Server running at http://localhost:${PORT}`)
-);
+app.listen(PORT, () => {
+  console.log(`🚀 Enhanced CMA API Server running on port ${PORT}`);
+  console.log(`🏠 Frontend: http://localhost:${PORT}`);
+  console.log(`🔍 API: http://localhost:${PORT}/api/properties/search`);
+  console.log(`❤️  Health: http://localhost:${PORT}/api/health`);
+  console.log(
+    `✨ Features: Total Sqft Filtering, Bearer Token Auth, Active Listings`
+  );
+
+  if (process.env.NODE_ENV === "production") {
+    console.log("🌍 Running in PRODUCTION mode for AWS Elastic Beanstalk");
+  }
+});
+
+module.exports = app;
