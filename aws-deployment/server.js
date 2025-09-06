@@ -9,20 +9,10 @@ const fetch = (...args) =>
 
 // --- 2. Init App ---
 const app = express();
-// AWS Elastic Beanstalk uses dynamic port assignment
 const PORT = process.env.PORT || 3002;
 
 // --- 3. Middleware ---
-// Enhanced CORS configuration for production
-app.use(
-  cors({
-    origin:
-      process.env.NODE_ENV === "production"
-        ? ["https://*.elasticbeanstalk.com", "https://*.amazonaws.com"]
-        : true,
-    credentials: true,
-  })
-);
+app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
@@ -92,33 +82,37 @@ async function getBearerToken() {
 
 const GEMINI_API_KEY = "AIzaSyACKfnIE47Ig4PZyzjygfV9VZxUKK0NPI0";
 
-// --- 5. Endpoints ---
+// --- TEAM MANAGEMENT STORAGE ---
+// In-memory storage for teams (in production, use a database)
+const teams = new Map();
+let teamIdCounter = 1;
 
-// Health check endpoint for AWS Load Balancer
-app.get("/api/health", (req, res) => {
-  res.json({
-    status: "OK",
-    timestamp: new Date().toISOString(),
-    message: "Enhanced CMA API is running with total square footage support",
-    version: "2.0.0",
-    features: [
-      "Bearer Token Authentication",
-      "Active Property Listings",
-      "Total Square Footage Filtering",
-      "Enhanced MLS Field Mapping",
-      "Above-Grade & Basement Sqft Support",
-    ],
-  });
-});
+// Team structure:
+// {
+//   id: number,
+//   name: string,
+//   description: string,
+//   members: [
+//     {
+//       id: number,
+//       agent_name: string,
+//       agent_mls_id: string,
+//       agent_phone: string,
+//       added_at: ISO date string
+//     }
+//   ],
+//   created_at: ISO date string,
+//   updated_at?: ISO date string
+// }
+
+// --- 5. Endpoints ---
 
 // Root health
 app.get("/", (req, res) => {
   res.json({
-    message: "Enhanced CMA API is running",
+    message: "Simple CMA API is running",
     status: "healthy",
     timestamp: new Date().toISOString(),
-    version: "2.0.0",
-    deployment: process.env.NODE_ENV || "development",
   });
 });
 
@@ -168,9 +162,13 @@ app.get("/api/test-config", (req, res) => {
 // Comprehensive Property Search API - covers all filter options
 app.get("/api/property-search", async (req, res) => {
   const {
+    // Property ID filters
+    mls_number,
+    listing_id,
+    id,
+
     // Location filters
     city,
-    state = "NE",
     zip_code,
     latitude,
     longitude,
@@ -181,8 +179,8 @@ app.get("/api/property-search", async (req, res) => {
     max_price,
     price_range, // e.g., "500k+" which means 500000+
 
-    // Property type filters
-    property_type = "House", // House, Condo, Townhouse, etc.
+    // Property type filters (default 'All' so MLS lookups don't get unintentionally filtered)
+    property_type = "All", // House, Condo, Townhouse, etc. ('All' means no filter)
 
     // Size filters
     min_sqft,
@@ -194,7 +192,7 @@ app.get("/api/property-search", async (req, res) => {
     max_baths,
 
     // Status filters
-    status = "For Sale", // "For Sale", "Sold", "All"
+    status, // "For Sale", "Sold", "All" - NO DEFAULT VALUE
 
     // Additional filters
     min_year_built,
@@ -216,12 +214,14 @@ app.get("/api/property-search", async (req, res) => {
     // Build base filters array
     let filters = [];
 
+    // Property ID filters - search in ALL properties (not just active)
+    if (mls_number) filters.push(`ListingId eq '${mls_number}'`);
+    if (listing_id) filters.push(`ListingId eq '${listing_id}'`);
+    if (id) filters.push(`ListingKey eq '${id}'`);
+
     // Location filters
     if (city) {
       filters.push(`tolower(City) eq '${city.toLowerCase()}'`);
-    }
-    if (state) {
-      filters.push(`tolower(StateOrProvince) eq '${state.toLowerCase()}'`);
     }
     if (zip_code) {
       filters.push(`PostalCode eq '${zip_code}'`);
@@ -261,8 +261,19 @@ app.get("/api/property-search", async (req, res) => {
       filters.push(`(${priceQuery})`);
     }
 
-    // Property type filter
-    if (property_type && property_type !== "All") {
+    // Determine if this is a direct MLS / Listing lookup
+    const isMlsLookup = !!(mls_number || listing_id || id);
+
+    // Property type filter: only apply for MLS lookup if caller explicitly provided property_type
+    const propertyTypeExplicitlyProvided = Object.prototype.hasOwnProperty.call(
+      req.query,
+      "property_type"
+    );
+    if (
+      property_type &&
+      property_type !== "All" &&
+      (!isMlsLookup || propertyTypeExplicitlyProvided)
+    ) {
       filters.push(`PropertyType eq '${property_type}'`);
     }
 
@@ -298,7 +309,7 @@ app.get("/api/property-search", async (req, res) => {
       filters.push(`BathroomsTotalInteger le ${max_baths}`);
     }
 
-    // Status filter
+    // Status filter - ONLY apply if explicitly requested
     if (status === "For Sale") {
       filters.push(`StandardStatus eq 'Active'`);
     } else if (status === "Sold") {
@@ -309,6 +320,7 @@ app.get("/api/property-search", async (req, res) => {
       const dateFilter = cutoffDate.toISOString().split("T")[0];
       filters.push(`CloseDate ge ${dateFilter}`);
     }
+    // If no status is specified, return ALL properties (Active, Closed, Expired, etc.)
 
     // Year built filters
     if (min_year_built) {
@@ -420,7 +432,7 @@ app.get("/api/property-search", async (req, res) => {
         zipCode: property.PostalCode || "",
         listPrice: property.ListPrice || 0,
         soldPrice: property.ClosePrice || 0,
-        sqft: property.AboveGradeFinishedArea || property.LivingArea || 0,
+        sqft: property.AboveGradeFinishedArea || 0, // Above-grade only
         basementSqft: property.BelowGradeFinishedArea || 0,
         beds: property.BedroomsTotal || 0,
         baths: property.BathroomsTotalInteger || 0,
@@ -494,6 +506,7 @@ app.get("/api/cma-comparables", async (req, res) => {
     same_subdivision,
     min_price,
     max_price,
+    property_type,
   } = req.query;
 
   //console.log("Received CMA comparables request:", req.query);
@@ -655,6 +668,11 @@ app.get("/api/cma-comparables", async (req, res) => {
       baseFilters.push(
         `tolower(SubdivisionName) eq '${residential_area.toLowerCase()}'`
       );
+    }
+
+    // Property type filter
+    if (property_type && property_type !== "All") {
+      baseFilters.push(`PropertyType eq '${property_type}'`);
     }
 
     // Define the core fields we need for CMA
@@ -852,6 +870,7 @@ app.get("/api/cma-comparables", async (req, res) => {
       active: filteredActive,
       closed: filteredClosed,
       combined: [...filteredActive, ...filteredClosed], // For convenience
+      properties: [...filteredActive, ...filteredClosed], // For client compatibility
       meta: {
         activeQuery: activeUrl,
         closedQuery: closedUrl,
@@ -1046,795 +1065,245 @@ app.get("/api/comps", async (req, res) => {
   }
 });
 
-// New Bearer Token Property Search API - For Active Listings
-app.get("/api/properties/search", async (req, res) => {
-  try {
-    const {
-      // Price range
-      minPrice,
-      maxPrice,
+// New Property Search API for testing with wildcard support
+app.get("/api/property-search-new", async (req, res) => {
+  const {
+    // Property IDs
+    mls_number,
+    listing_id,
 
-      // Property features
-      bedrooms,
-      bathrooms,
-      sqft, // Above-grade square footage
-      minSqft, // Minimum above-grade square footage
-      maxSqft, // Maximum above-grade square footage
-      totalSqft, // Total square footage (above-grade + basement)
-      minTotalSqft, // Minimum total square footage
-      maxTotalSqft, // Maximum total square footage
-
-      // Property type
-      propertyType, // House, Condo, Townhouse, etc.
-
-      // Status
-      status = "Active", // Active, Pending, Sold
-
-      // Location
-      city,
-      zipCode,
-
-      // Sorting
-      sortBy = "ListPrice",
-      sortOrder = "desc",
-
-      // Pagination
-      page = 1,
-      limit = 50,
-    } = req.query;
-
-    // Get Bearer token
-    const bearerToken = await getBearerToken();
-    if (!bearerToken) {
-      return res.status(500).json({
-        error: "Unable to authenticate with Paragon API",
-      });
-    }
-
-    console.log("Property Search Request:", {
-      minPrice,
-      maxPrice,
-      bedrooms,
-      bathrooms,
-      sqft,
-      minSqft,
-      maxSqft,
-      totalSqft,
-      minTotalSqft,
-      maxTotalSqft,
-      propertyType,
-      status,
-      city,
-      zipCode,
-    });
-
-    // Build query parameters for new Platform API
-    const searchParams = new URLSearchParams();
-
-    // Build filter conditions
-    let filterConditions = [];
-
-    // Price filters
-    if (minPrice) {
-      filterConditions.push(`ListPrice ge ${minPrice}`);
-    }
-    if (maxPrice) {
-      filterConditions.push(`ListPrice le ${maxPrice}`);
-    }
-
-    // Bedroom filter
-    if (bedrooms) {
-      filterConditions.push(`BedroomsTotal ge ${bedrooms}`);
-    }
-
-    // Bathroom filter
-    if (bathrooms) {
-      filterConditions.push(`BathroomsTotalInteger ge ${bathrooms}`);
-    }
-
-    // Above-grade square footage filters
-    if (sqft) {
-      filterConditions.push(`AboveGradeFinishedArea ge ${sqft}`);
-    }
-    if (minSqft) {
-      filterConditions.push(`AboveGradeFinishedArea ge ${minSqft}`);
-    }
-    if (maxSqft) {
-      filterConditions.push(`AboveGradeFinishedArea le ${maxSqft}`);
-    }
-
-    // Total building area filters (when API supports it directly)
-    if (totalSqft) {
-      filterConditions.push(`BuildingAreaTotal ge ${totalSqft}`);
-    }
-    if (minTotalSqft) {
-      filterConditions.push(`BuildingAreaTotal ge ${minTotalSqft}`);
-    }
-    if (maxTotalSqft) {
-      filterConditions.push(`BuildingAreaTotal le ${maxTotalSqft}`);
-    }
-
-    // Property type filter
-    if (propertyType) {
-      filterConditions.push(`PropertyType eq '${propertyType}'`);
-    }
-
-    // Status filter (default to Active for live listings)
-    filterConditions.push(`StandardStatus eq '${status}'`);
+    // Agent searches
+    buyer_agent_mls_id,
+    buyer_agent_name,
+    listing_agent_mls_id,
+    listing_agent_name,
 
     // Location filters
-    if (city) {
-      filterConditions.push(`City eq '${city}'`);
-    }
+    address,
+    city,
+    state = "NE",
+    zip_code,
+    subdivision,
+    radius_miles = 5,
 
-    if (zipCode) {
-      filterConditions.push(`PostalCode eq '${zipCode}'`);
-    }
+    // Property specifications
+    min_sqft,
+    max_sqft,
+    above_grade_sqft,
+    basement_sqft,
+    total_sqft,
 
-    // Combine all filters
-    if (filterConditions.length > 0) {
-      searchParams.append("$filter", filterConditions.join(" and "));
-    }
+    // Price filters
+    min_price,
+    max_price,
 
-    // Sorting
-    searchParams.append("$orderby", `${sortBy} ${sortOrder}`);
+    // Property details
+    min_year_built,
+    max_year_built,
+    bedrooms,
+    min_bedrooms,
+    max_bedrooms,
+    bathrooms,
+    min_bathrooms,
+    max_bathrooms,
+    garage_spaces,
 
-    // Pagination
-    const skip = (page - 1) * limit;
-    searchParams.append("$skip", skip.toString());
-    searchParams.append("$top", limit.toString());
+    // Property features
+    waterfront,
+    new_construction,
+    property_type,
+    property_condition,
 
-    // Make request to new Platform API
-    const apiUrl = `${
-      paragonApiConfig.platformApiUrl
-    }/properties?${searchParams.toString()}`;
+    // Status filters
+    status, // Active, Sold, Closed, etc.
 
-    console.log("API Request URL:", apiUrl);
+    // Sorting and pagination
+    sort_by = "ListPrice",
+    sort_order = "desc",
+    limit = 200,
+    offset = 0,
+  } = req.query;
 
-    const response = await fetch(apiUrl, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${bearerToken}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-    });
+  try {
+    console.log("New Property Search Request:", req.query);
 
-    if (!response.ok) {
-      console.error(
-        "API Response Error:",
-        response.status,
-        response.statusText
+    // Build filters
+    let filters = [];
+
+    // Property ID filters
+    if (mls_number) filters.push(`ListingId eq '${mls_number}'`);
+    if (listing_id) filters.push(`ListingId eq '${listing_id}'`);
+
+    // Agent filters with wildcard support
+    if (buyer_agent_mls_id)
+      filters.push(`BuyerAgentMlsId eq '${buyer_agent_mls_id}'`);
+    if (buyer_agent_name)
+      filters.push(
+        `contains(tolower(BuyerAgentFullName),'${buyer_agent_name.toLowerCase()}')`
       );
-      const errorText = await response.text();
-      console.error("Error details:", errorText);
-      return res.status(response.status).json({
-        error: `Paragon API error: ${response.status} ${response.statusText}`,
-        details: errorText,
-      });
-    }
+    if (listing_agent_mls_id)
+      filters.push(`ListAgentMlsId eq '${listing_agent_mls_id}'`);
+    if (listing_agent_name)
+      filters.push(
+        `contains(tolower(ListAgentFullName),'${listing_agent_name.toLowerCase()}')`
+      );
 
+    // Location filters
+    // For CMA searches, we don't want to filter by subject property address - we want comparable properties
+    // Only filter by address if it's not a CMA/comparable property search
+    if (address && !city) {
+      // If city is provided, assume it's a CMA search for comparables
+      filters.push(
+        `contains(tolower(UnparsedAddress),'${address.toLowerCase()}')`
+      );
+    }
+    if (city) filters.push(`tolower(City) eq '${city.toLowerCase()}'`);
+    if (state)
+      filters.push(`tolower(StateOrProvince) eq '${state.toLowerCase()}'`);
+    if (zip_code) filters.push(`PostalCode eq '${zip_code}'`);
+    if (subdivision)
+      filters.push(
+        `contains(tolower(SubdivisionName),'${subdivision.toLowerCase()}')`
+      );
+
+    // Square footage filters
+    if (min_sqft) filters.push(`LivingArea ge ${min_sqft}`);
+    if (max_sqft) filters.push(`LivingArea le ${max_sqft}`);
+    if (above_grade_sqft)
+      filters.push(`AboveGradeFinishedArea eq ${above_grade_sqft}`);
+    if (basement_sqft)
+      filters.push(`BelowGradeFinishedArea eq ${basement_sqft}`);
+    if (total_sqft) filters.push(`BuildingAreaTotal eq ${total_sqft}`);
+
+    // Price filters
+    if (min_price) filters.push(`ListPrice ge ${min_price}`);
+    if (max_price) filters.push(`ListPrice le ${max_price}`);
+
+    // Year built filters
+    if (min_year_built) filters.push(`YearBuilt ge ${min_year_built}`);
+    if (max_year_built) filters.push(`YearBuilt le ${max_year_built}`);
+
+    // Bedroom filters
+    if (bedrooms) filters.push(`BedroomsTotal eq ${bedrooms}`);
+    if (min_bedrooms) filters.push(`BedroomsTotal ge ${min_bedrooms}`);
+    if (max_bedrooms) filters.push(`BedroomsTotal le ${max_bedrooms}`);
+
+    // Bathroom filters
+    if (bathrooms) filters.push(`BathroomsTotalInteger eq ${bathrooms}`);
+    if (min_bathrooms)
+      filters.push(`BathroomsTotalInteger ge ${min_bathrooms}`);
+    if (max_bathrooms)
+      filters.push(`BathroomsTotalInteger le ${max_bathrooms}`);
+
+    // Other property filters
+    if (garage_spaces) filters.push(`GarageSpaces eq ${garage_spaces}`);
+    if (waterfront)
+      filters.push(`WaterfrontYN eq ${waterfront.toLowerCase() === "true"}`);
+    if (new_construction)
+      filters.push(
+        `NewConstructionYN eq ${new_construction.toLowerCase() === "true"}`
+      );
+    if (property_type) filters.push(`PropertyType eq '${property_type}'`);
+    if (property_condition)
+      filters.push(
+        `contains(tolower(PropertyCondition),'${property_condition.toLowerCase()}')`
+      );
+
+    // Status filters - REMOVED: Now returns ALL properties regardless of status
+    // This allows the frontend to get active, sold, expired, cancelled, etc. all together
+    // if (status) { ... } - Status filtering disabled for comprehensive results
+
+    const filterQuery = filters.length
+      ? `$filter=${encodeURIComponent(filters.join(" and "))}`
+      : "";
+    const url = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?access_token=${paragonApiConfig.serverToken}&$top=${limit}&$skip=${offset}&$orderby=${sort_by} ${sort_order}&${filterQuery}`;
+
+    console.log("API URL:", url);
+
+    const response = await fetch(url);
     const data = await response.json();
 
-    console.log("API Response received:", {
-      count: data.value ? data.value.length : 0,
-      hasNextLink: !!data["@odata.nextLink"],
+    // Process properties to add computed fields like imageUrl, distance_miles, etc.
+    const processedProperties = (data.value || []).map((prop, index) => {
+      // Calculate distance if coordinates are provided
+      let distance_miles = null;
+      if (
+        prop.Latitude &&
+        prop.Longitude &&
+        req.query.latitude &&
+        req.query.longitude
+      ) {
+        distance_miles = haversineMiles(
+          parseFloat(req.query.latitude),
+          parseFloat(req.query.longitude),
+          parseFloat(prop.Latitude),
+          parseFloat(prop.Longitude)
+        );
+      }
+
+      // Determine if property is active
+      const isActive = prop.StandardStatus === "Active";
+
+      // Extract square footage - use AboveGradeFinishedArea as primary
+      const sqftValue = prop.AboveGradeFinishedArea || prop.LivingArea || 0;
+
+      // Calculate price and price per sqft
+      const price = isActive ? prop.ListPrice : prop.ClosePrice;
+      const totalSqft = sqftValue + (prop.BelowGradeFinishedArea || 0);
+      const pricePerSqft =
+        price && totalSqft ? Math.round(price / totalSqft) : 0;
+
+      return {
+        id: prop.ListingKey,
+        address: prop.UnparsedAddress,
+        city: prop.City,
+        listPrice: prop.ListPrice,
+        soldPrice: prop.ClosePrice,
+        sqft: sqftValue,
+        basementSqft: prop.BelowGradeFinishedArea,
+        totalSqft,
+        beds: prop.BedroomsTotal,
+        baths: prop.BathroomsTotalInteger || prop.BathroomsTotal,
+        garage: prop.GarageSpaces,
+        yearBuilt: prop.YearBuilt,
+        status: prop.StandardStatus,
+        closeDate: prop.CloseDate,
+        onMarketDate: prop.OnMarketDate,
+        pricePerSqft,
+        propertyType: prop.PropertyType,
+        condition:
+          Array.isArray(prop.PropertyCondition) &&
+          prop.PropertyCondition.length > 0
+            ? prop.PropertyCondition[0]
+            : "Average",
+        style:
+          Array.isArray(prop.ArchitecturalStyle) &&
+          prop.ArchitecturalStyle.length > 0
+            ? prop.ArchitecturalStyle[0]
+            : "",
+        subdivision: prop.SubdivisionName || "",
+        latitude: prop.Latitude,
+        longitude: prop.Longitude,
+        distance_miles,
+        isActive,
+        imageUrl:
+          prop.Media && prop.Media.length > 0
+            ? prop.Media[0].MediaURL
+            : "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzllYTNhOCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPk5vIFBob3RvPC90ZXh0Pjwvc3ZnPg==",
+      };
     });
-
-    // Transform data for consistent response format
-    const properties = data.value
-      ? data.value.map((property) => ({
-          id: property.ListingKey,
-          address: `${
-            property.UnparsedAddress ||
-            property.StreetNumber + " " + property.StreetName
-          }, ${property.City}, ${property.StateOrProvince} ${
-            property.PostalCode
-          }`,
-          price: property.ListPrice,
-          bedrooms: property.BedroomsTotal,
-          bathrooms: property.BathroomsTotalInteger,
-          sqft: property.AboveGradeFinishedArea || property.LivingArea || 0,
-          basementSqft: property.BelowGradeFinishedArea || 0,
-          totalSqft:
-            property.BuildingAreaTotal ||
-            (property.AboveGradeFinishedArea || property.LivingArea || 0) +
-              (property.BelowGradeFinishedArea || 0),
-          propertyType: property.PropertyType,
-          status: property.StandardStatus,
-          listDate: property.ListingContractDate,
-          photoUrl:
-            property.PhotosCount > 0
-              ? `${paragonApiConfig.platformApiUrl}/media/${property.ListingKey}/photo/1`
-              : null,
-          description: property.PublicRemarks,
-          lotSize: property.LotSizeAcres,
-          yearBuilt: property.YearBuilt,
-          city: property.City,
-          zipCode: property.PostalCode,
-          mlsNumber: property.MLSNumber || property.ListingId,
-        }))
-      : [];
-
-    // Post-process filtering for total square footage as fallback
-    // (only needed if BuildingAreaTotal filtering wasn't applied at API level)
-    let filteredProperties = properties;
-
-    // Only do post-processing if we have total sqft filters but couldn't apply them at API level
-    const needsPostProcessing =
-      (totalSqft || minTotalSqft || maxTotalSqft) &&
-      properties.some(
-        (p) => !p.totalSqft || p.totalSqft === p.sqft + p.basementSqft
-      );
-
-    if (needsPostProcessing) {
-      filteredProperties = properties.filter((property) => {
-        const total = property.totalSqft;
-
-        if (totalSqft && total < totalSqft) return false;
-        if (minTotalSqft && total < minTotalSqft) return false;
-        if (maxTotalSqft && total > maxTotalSqft) return false;
-
-        return true;
-      });
-    }
 
     res.json({
       success: true,
-      count: filteredProperties.length,
-      properties: filteredProperties,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        hasMore: !!data["@odata.nextLink"],
-      },
-      searchCriteria: {
-        minPrice: minPrice ? parseInt(minPrice) : null,
-        maxPrice: maxPrice ? parseInt(maxPrice) : null,
-        bedrooms: bedrooms ? parseInt(bedrooms) : null,
-        bathrooms: bathrooms ? parseInt(bathrooms) : null,
-        sqft: sqft ? parseInt(sqft) : null,
-        minSqft: minSqft ? parseInt(minSqft) : null,
-        maxSqft: maxSqft ? parseInt(maxSqft) : null,
-        totalSqft: totalSqft ? parseInt(totalSqft) : null,
-        minTotalSqft: minTotalSqft ? parseInt(minTotalSqft) : null,
-        maxTotalSqft: maxTotalSqft ? parseInt(maxTotalSqft) : null,
-        propertyType,
-        status,
-        city,
-        zipCode,
-      },
+      count: processedProperties.length,
+      totalAvailable: data["@odata.count"] || "unknown",
+      properties: processedProperties,
+      searchFilters: req.query,
+      apiUrl: url.replace(paragonApiConfig.serverToken, "***"), // Hide token in response
     });
   } catch (error) {
-    console.error("Property search error:", error);
-    res.status(500).json({
-      error: "Internal server error",
-      message: error.message,
-      details: process.env.NODE_ENV === "development" ? error.stack : undefined,
-    });
-  }
-});
-
-// Helper: Haversine distance in miles between two lat/lon pairs
-function haversineMiles(lat1, lon1, lat2, lon2) {
-  const toRad = (v) => (v * Math.PI) / 180;
-  const R = 3958.8; // Earth radius in miles
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
-
-// Helper: attempt to find a subject property using multiple normalization strategies
-async function findSubjectProperty(address, city) {
-  if (!address) return null;
-  // Basic sanitation
-  const sanitize = (s) => s.replace(/'/g, "");
-  const base = sanitize(address.trim());
-  const addrLower = base.toLowerCase();
-  const variants = new Set();
-  variants.add(addrLower);
-  // Expand common suffix abbreviations
-  const suffixMap = {
-    " st": " street",
-    " rd": " road",
-    " ave": " avenue",
-    " blvd": " boulevard",
-    " dr": " drive",
-    " ln": " lane",
-    " ct": " court",
-    " cir": " circle",
-    " ter": " terrace",
-    " pl": " place",
-  };
-  for (const [abbr, full] of Object.entries(suffixMap)) {
-    if (addrLower.endsWith(abbr)) variants.add(addrLower.replace(abbr, full));
-    if (addrLower.endsWith(full)) variants.add(addrLower.replace(full, abbr));
-  }
-  // Directional normalization (s -> s, south)
-  if (/\b s \b/.test(` ${addrLower} `))
-    variants.add(addrLower.replace(/\b s \b/, " south "));
-  if (/\b south \b/.test(` ${addrLower} `))
-    variants.add(addrLower.replace(/\b south \b/, " s "));
-
-  // Try exact UnparsedAddress matches first
-  for (const v of variants) {
-    // Attempt direct case-sensitive match first
-    const directFilter = `$filter=UnparsedAddress eq '${base}'`;
-    const lowerFilter = `$filter=tolower(UnparsedAddress) eq '${v}'`;
-    const attempts = [directFilter, lowerFilter];
-    for (const filter of attempts) {
-      const searchUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?${filter}&$top=3`;
-      try {
-        const resp = await fetch(searchUrl, {
-          headers: { Authorization: `Bearer ${paragonApiConfig.serverToken}` },
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data.value && data.value.length) {
-            const p = data.value[0];
-
-            return {
-              address: p.UnparsedAddress || p.Address || base,
-              city: p.City || city,
-              sqft: Number(p.LivingArea || p.AboveGradeFinishedArea || 0),
-              latitude: Number(p.Latitude || 0),
-              longitude: Number(p.Longitude || 0),
-              yearBuilt: Number(p.YearBuilt || 0),
-              beds: Number(p.BedroomsTotal || 0),
-              baths: Number(p.BathroomsTotalDecimal || p.BathroomsTotal || 0),
-              raw: p,
-            };
-          }
-        }
-      } catch (e) {
-        //console.log("[SUBJECT] Variant search error", e.message);
-      }
-    }
-  }
-
-  // Partial strategies: number + remainder
-  const numberMatch = base.match(/^(\d+)/);
-  if (numberMatch) {
-    const num = numberMatch[1];
-    const remainder = sanitize(base.slice(num.length).trim().toLowerCase());
-    if (remainder.length > 3) {
-      // Use substringof (OData v2) or contains - try substringof first
-      const partials = [
-        `$filter=StreetNumber eq '${num}' and substringof('${remainder}', tolower(UnparsedAddress)) eq true`,
-        `$filter=substringof('${remainder}', tolower(UnparsedAddress)) eq true`,
-      ];
-      for (const f of partials) {
-        const url = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?${f}&$top=5`;
-        try {
-          const resp = await fetch(url, {
-            headers: {
-              Authorization: `Bearer ${paragonApiConfig.serverToken}`,
-            },
-          });
-          if (resp.ok) {
-            const data = await resp.json();
-            if (data.value && data.value.length) {
-              const p = data.value[0];
-
-              return {
-                address: p.UnparsedAddress || p.Address || base,
-                city: p.City || city,
-                sqft: Number(p.LivingArea || p.AboveGradeFinishedArea || 0),
-                latitude: Number(p.Latitude || 0),
-                longitude: Number(p.Longitude || 0),
-                yearBuilt: Number(p.YearBuilt || 0),
-                beds: Number(p.BedroomsTotal || 0),
-                baths: Number(p.BathroomsTotalDecimal || p.BathroomsTotal || 0),
-                raw: p,
-              };
-            }
-          }
-        } catch (e) {
-          console.log("[SUBJECT] Partial search error", e.message);
-        }
-      }
-    }
-  }
-  return null;
-}
-
-// Comps-from-address endpoint: find subject by address, then search comps nearby and within sqft delta
-app.get("/api/comps-from-address", async (req, res) => {
-  //console.log("Received comps-from-address request:", req.query);
-
-  if (paragonApiConfig.serverToken === "YOUR_SERVER_TOKEN_HERE") {
-    return res.status(500).json({
-      message: "Server configuration error",
-      details: "Paragon Server Token not configured.",
-    });
-  }
-
-  try {
-    const address = req.query.address || "";
-    const city = req.query.city || "";
-    // New: optional comma-separated postal codes list to broaden comps search
-    const postalCodesRaw =
-      req.query.postalCodes || req.query.postal_codes || req.query.zips || "";
-    const postalCodes = String(postalCodesRaw)
-      .split(/[,;\s]+/)
-      .map((z) => z.trim())
-      .filter((z) => z.length >= 4);
-    let radiusMiles = parseFloat(
-      req.query.radius_miles || req.query.radiusMiles || 2
-    );
-    let sqftDelta = parseInt(
-      req.query.sqft_delta || req.query.sqftDelta || 700,
-      10
-    );
-    const minResults = parseInt(req.query.min_results || 5, 10) || 5;
-
-    if (!address && !city) {
-      return res
-        .status(400)
-        .json({ message: "address or city parameter required" });
-    }
-
-    // Step 1: try to find the subject property by address (reuse property-search logic)
-    let subject = await findSubjectProperty(address, city);
-    // if (subject) {
-    //   console.log(
-    //     `[COMPS] Subject property found. Address='${subject.address}' sqft=${subject.sqft} lat=${subject.latitude} lon=${subject.longitude}`
-    //   );
-    // } else {
-    //   console.log(
-    //     `[COMPS] Subject not found for '${address}'. Provide ?sqft=#### to improve range.`
-    //   );
-    // }
-
-    // If subject not found, fall back to using provided city and sqft if available
-    const subjectSqft = subject
-      ? subject.sqft
-      : req.query.sqft
-      ? Number(req.query.sqft)
-      : 0;
-
-    // Build OData query using city and sqft window
-    let sqft_min = Math.max(0, (subjectSqft || 0) - sqftDelta);
-    let sqft_max = (subjectSqft || 0) + sqftDelta || sqftDelta || 2000;
-    // If we still have no subject sqft (0) and user didn't pass sqft, broaden range to avoid overly narrow query
-    if (!subjectSqft) {
-      sqft_min = 0;
-      sqft_max = Math.max(2500, sqftDelta * 5); // broaden search so we can later infer typical size
-      // console.log(
-      //   `[COMPS] Broadening sqft window due to missing subject size -> [${sqft_min}, ${sqft_max}]`
-      // );
-    }
-    // console.log(
-    //   `[COMPS] Computed sqft window subjectSqft=${subjectSqft} delta=${sqftDelta} -> range [${sqft_min}, ${sqft_max}] radius=${radiusMiles}mi minResults=${minResults}`
-    // );
-    let areaClause = `LivingArea ge ${sqft_min} and LivingArea le ${sqft_max}`;
-    let locationClause = city ? `City eq '${city}'` : "";
-    if (postalCodes.length) {
-      const orZip = postalCodes
-        .slice(0, 10) // cap to avoid overly long filters
-        .map((z) => `PostalCode eq '${z.replace(/'/g, "").trim()}'`)
-        .join(" or ");
-      const zipGroup = `(${orZip})`;
-      locationClause = locationClause
-        ? `${locationClause} and ${zipGroup}`
-        : zipGroup;
-      // //console.log(
-      //   `[COMPS] Applying postalCodes filter: ${postalCodes.join(",")}`
-      // );
-    }
-    const conditions = [
-      "StandardStatus eq 'Closed'",
-      locationClause,
-      areaClause,
-    ]
-      .filter(Boolean)
-      .join(" and ");
-    const odataFilterComps = `$filter=${conditions}`;
-    const compsUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?${odataFilterComps}&$top=200`;
-
-    const compsResp = await fetch(compsUrl, {
-      headers: {
-        Authorization: `Bearer ${paragonApiConfig.serverToken}`,
-        "Content-Type": "application/json",
-      },
-    });
-    if (!compsResp.ok) {
-      console.error("Comps fetch failed:", await compsResp.text());
-      throw new Error("Comps fetch failed");
-    }
-    const compsData = await compsResp.json();
-    const listings = compsData.value || [];
-
-    // Map and filter by distance if we have subject coordinates
-    const mapped = listings.map((record) => ({
-      id: record.ListingKey || record.PropertyId || record.id,
-      address:
-        record.UnparsedAddress ||
-        record.Address ||
-        `${record.StreetNumber} ${record.StreetName}`,
-      city: record.City,
-      soldPrice: Number(record.ClosePrice || record.ListPrice || 0),
-      listPrice: Number(record.ListPrice || 0),
-      sqft: Number(record.LivingArea || record.AboveGradeFinishedArea || 0),
-      beds: Number(record.BedroomsTotal || 0),
-      baths: Number(record.BathroomsTotalDecimal || record.BathroomsTotal || 0),
-      garage: Number(
-        record.GarageSpaces || record.ParkingTotal || record.CoveredSpaces || 0
-      ),
-      yearBuilt: Number(record.YearBuilt || 0),
-      latitude: Number(record.Latitude || 0),
-      longitude: Number(record.Longitude || 0),
-      imageUrl:
-        record.Media && record.Media.length > 0
-          ? record.Media[0].MediaURL
-          : record.Photos && record.Photos.length > 0
-          ? record.Photos[0].url
-          : "",
-      raw: record,
-    }));
-
-    let filtered = mapped;
-    if (subject && subject.latitude && subject.longitude) {
-      filtered = mapped
-        .filter((m) => m.latitude && m.longitude)
-        .map((m) => ({
-          ...m,
-          distance_miles: haversineMiles(
-            subject.latitude,
-            subject.longitude,
-            m.latitude,
-            m.longitude
-          ),
-        }))
-        .filter((m) => m.distance_miles <= radiusMiles)
-        .sort((a, b) => a.distance_miles - b.distance_miles);
-
-      // If not enough results, expand the radius until we have minResults or hit 20 miles
-      let currentRadius = radiusMiles;
-      while (filtered.length < minResults && currentRadius < 20) {
-        currentRadius = currentRadius * 2;
-        filtered = mapped
-          .filter((m) => m.latitude && m.longitude)
-          .map((m) => ({
-            ...m,
-            distance_miles: haversineMiles(
-              subject.latitude,
-              subject.longitude,
-              m.latitude,
-              m.longitude
-            ),
-          }))
-          .filter((m) => m.distance_miles <= currentRadius)
-          .sort((a, b) => a.distance_miles - b.distance_miles);
-      }
-    }
-
-    // If still no coords or filtered is empty, fall back to city-based results
-    if (
-      (!subject || !subject.latitude || !subject.longitude) &&
-      (!filtered || filtered.length === 0)
-    ) {
-      // take top N by recency/price
-      filtered = mapped.slice(0, Math.min(20, mapped.length));
-    }
-
-    if (filtered.length) {
-      const sample = filtered
-        .slice(0, 3)
-        .map((c) => ({ id: c.id, sqft: c.sqft, dist: c.distance_miles }));
-      // console.log("[COMPS] Sample comps:", sample);
-    }
-
-    res.json({
-      subject: subject || null,
-      params: { radiusMiles, sqftDelta, sqft_min, sqft_max },
-      comps: filtered,
-    });
-  } catch (err) {
-    console.error("comps-from-address error:", err);
-    res.status(500).json({
-      message: "Failed to fetch comps from address.",
-      details: err.message,
-    });
-  }
-});
-
-// Property search endpoint - search for a specific property by address
-app.get("/api/property-search", async (req, res) => {
-  // console.log("Received request for property search with query:", req.query);
-
-  // Check if server token is configured
-  if (paragonApiConfig.serverToken === "YOUR_SERVER_TOKEN_HERE") {
-    console.error("Server token not configured!");
-    return res.status(500).json({
-      message: "Server configuration error",
-      details: "Paragon Server Token not configured.",
-    });
-  }
-
-  try {
-    const { address } = req.query;
-    const debug = req.query.debug === "1" || req.query.debug === "true";
-
-    if (!address) {
-      return res.status(400).json({
-        message: "Address parameter is required",
-      });
-    }
-
-    // Use tolower to work around API case-sensitivity as per Paragon docs
-    const odataFilter = `$filter=tolower(UnparsedAddress) eq '${address.toLowerCase()}'`;
-    const searchUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?${odataFilter}&$top=5`;
-
-    // console.log("Making property search request to:", searchUrl);
-
-    // Fetch property using Server Token authentication
-    const propertyResponse = await fetch(searchUrl, {
-      headers: {
-        Authorization: `Bearer ${paragonApiConfig.serverToken}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    //console.log("Property search response status:", propertyResponse.status);
-
-    if (!propertyResponse.ok) {
-      console.error(
-        "Property search error response:",
-        await propertyResponse.text()
-      );
-      throw new Error(`Property search failed (${propertyResponse.status})`);
-    }
-
-    const propertyData = await propertyResponse.json();
-    const properties = propertyData.value || [];
-    // console.log(`Found ${properties.length} properties matching address.`);
-
-    let property = properties[0];
-
-    if (!property) {
-      try {
-        const variant = await findSubjectProperty(address, "");
-        if (variant && variant.raw) {
-          property = variant.raw;
-        }
-      } catch (e) {
-        console.log("[PROPERTY-SEARCH] Variant strategy error:", e.message);
-      }
-    }
-
-    if (!property) {
-      return res.json({
-        found: false,
-        message: "No property found with that address",
-        suggestions:
-          "Try adding direction (e.g., 'South') or a full suffix (Street) or supply ?sqft=#### manually.",
-        attempted: debug ? { directFilter: odataFilter } : undefined,
-      });
-    }
-
-    // Format the first matching or fallback-found property with comprehensive details
-    const formattedProperty = {
-      found: true,
-      id: property.ListingKey || property.PropertyId,
-      address: property.UnparsedAddress || property.Address,
-      city: property.City,
-      state: property.StateOrProvince,
-      postalCode: property.PostalCode,
-      status: property.StandardStatus,
-
-      // Property details
-      sqft: Number(property.LivingArea || property.AboveGradeFinishedArea || 0),
-      aboveGradeSqft: Number(property.AboveGradeFinishedArea || 0),
-      belowGradeSqft: Number(property.BelowGradeFinishedArea || 0),
-      beds: Number(property.BedroomsTotal || 0),
-      baths: Number(
-        property.BathroomsTotalDecimal || property.BathroomsTotal || 0
-      ),
-      bathsFull: Number(property.BathroomsFull || 0),
-      bathsHalf: Number(property.BathroomsHalf || 0),
-      garage: Number(
-        property.GarageSpaces ||
-          property.ParkingTotal ||
-          property.CoveredSpaces ||
-          0
-      ),
-      yearBuilt: Number(property.YearBuilt || 0),
-
-      // Financial data
-      listPrice: Number(property.ListPrice || 0),
-      originalListPrice: Number(property.OriginalListPrice || 0),
-      soldPrice: Number(property.ClosePrice || 0),
-      pricePerSqft:
-        property.ListPrice && property.LivingArea && property.LivingArea > 0
-          ? Math.round(property.ListPrice / property.LivingArea)
-          : 0,
-      taxAssessedValue: Number(property.TaxAssessedValue || 0),
-      taxAnnualAmount: Number(property.TaxAnnualAmount || 0),
-
-      // Property characteristics
-      propertyType: property.PropertyType || "",
-      propertySubType: property.PropertySubType || "",
-      lotSizeAcres: Number(property.LotSizeAcres || 0),
-      lotSizeSquareFeet: Number(property.LotSizeSquareFeet || 0),
-      stories: Number(property.StoriesTotal || 0),
-      condition:
-        property.PropertyCondition && property.PropertyCondition.length > 0
-          ? property.PropertyCondition[0]
-          : "",
-
-      // Systems and features
-      heating: property.Heating || "",
-      cooling: property.Cooling || "",
-      appliances: property.Appliances || "",
-      flooring: property.Flooring || "",
-      basement: property.Basement || "",
-      fireplace: Number(property.FireplacesTotal || 0),
-      pool: property.PoolPrivateYN || false,
-      waterfront: property.WaterfrontYN || false,
-
-      // School information
-      schoolElementary: property.ElementarySchool || "",
-      schoolMiddle: property.MiddleOrJuniorSchool || "",
-      schoolHigh: property.HighSchool || "",
-
-      // Listing details
-      mlsNumber: property.ListingId || "",
-      daysOnMarket: Number(
-        property.DaysOnMarket || property.CumulativeDaysOnMarket || 0
-      ),
-      onMarketDate: property.OnMarketDate || "",
-      listAgent: {
-        name: property.ListAgentFullName || "",
-        phone: property.ListAgentPreferredPhone || "",
-        email: property.ListAgentEmail || "",
-        mlsId: property.ListAgentMlsId || "",
-      },
-
-      // Media
-      imageUrl:
-        property.Media && property.Media.length > 0
-          ? property.Media[0].MediaURL
-          : property.Photos && property.Photos.length > 0
-          ? property.Photos[0].url
-          : "",
-      images: property.Media ? property.Media.map((m) => m.MediaURL) : [],
-      virtualTour:
-        property.VirtualTourURLBranded ||
-        property.VirtualTourURLUnbranded ||
-        "",
-
-      // Location
-      coordinates: property.Coordinates || "",
-      latitude: Number(property.Latitude || 0),
-      longitude: Number(property.Longitude || 0),
-
-      // Additional details
-      publicRemarks: property.PublicRemarks || "",
-      buildingFeatures: property.BuildingFeatures || "",
-      exteriorFeatures: property.ExteriorFeatures || "",
-      interiorFeatures: property.InteriorFeatures || "",
-      architecturalStyle: property.ArchitecturalStyle || "",
-      utilities: property.Utilities || "",
-
-      // Raw data for debugging
-      rawData: property,
-    };
-
-    res.json(formattedProperty);
-  } catch (error) {
-    console.error("Property search error:", error);
-    res.status(500).json({
-      message: "Failed to search for property.",
-      details: error.message,
-    });
+    console.error("Error in /api/property-search-new:", error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -2017,7 +1486,24 @@ app.post("/api/property-details-from-address", async (req, res) => {
     console.log("Subdivision:", details.SubdivisionName);
     console.log("Style:", details.ArchitecturalStyle);
 
-    return res.json(details);
+    // Map the square footage fields correctly
+    const mappedDetails = {
+      ...details,
+      // Override the square footage fields with correct mapping
+      sqft: details.AboveGradeFinishedArea || 0, // Above-grade only
+      basementSqft: details.BelowGradeFinishedArea || 0,
+      totalSqft:
+        details.BuildingAreaTotal ||
+        (details.AboveGradeFinishedArea || 0) +
+          (details.BelowGradeFinishedArea || 0),
+    };
+
+    console.log("Mapped square footage:");
+    console.log("- Above-grade (sqft):", mappedDetails.sqft);
+    console.log("- Basement (basementSqft):", mappedDetails.basementSqft);
+    console.log("- Total (totalSqft):", mappedDetails.totalSqft);
+
+    return res.json(mappedDetails);
   } catch (err) {
     console.error("Error fetching property details:", err.message);
     return res.status(500).json({ error: "Failed to fetch property details" });
@@ -2060,19 +1546,638 @@ app.post("/api/generate-text", async (req, res) => {
   }
 });
 
-// --- 6. Start ---
-app.listen(PORT, () => {
-  console.log(`🚀 Enhanced CMA API Server running on port ${PORT}`);
-  console.log(`🏠 Frontend: http://localhost:${PORT}`);
-  console.log(`🔍 API: http://localhost:${PORT}/api/properties/search`);
-  console.log(`❤️  Health: http://localhost:${PORT}/api/health`);
-  console.log(
-    `✨ Features: Total Sqft Filtering, Bearer Token Auth, Active Listings`
-  );
+// Haversine formula to calculate distance between two coordinates in miles
+function haversineMiles(lat1, lon1, lat2, lon2) {
+  const toRad = (v) => (v * Math.PI) / 180;
+  const R = 3958.8; // Earth radius in miles
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
 
-  if (process.env.NODE_ENV === "production") {
-    console.log("🌍 Running in PRODUCTION mode for AWS Elastic Beanstalk");
+// Agent suggestions endpoint for autocomplete
+app.get("/api/agents/suggestions", async (req, res) => {
+  const { q, type = "listing", limit = 20 } = req.query;
+
+  try {
+    if (!q || q.length < 2) {
+      return res.json({
+        success: true,
+        suggestions: [],
+        message: "Query must be at least 2 characters",
+      });
+    }
+
+    // Determine which agent field to search
+    const agentField =
+      type === "buyer" ? "BuyerAgentFullName" : "ListAgentFullName";
+    const agentMlsField =
+      type === "buyer" ? "BuyerAgentMlsId" : "ListAgentMlsId";
+    const agentPhoneField =
+      type === "buyer" ? "BuyerAgentPreferredPhone" : "ListAgentPreferredPhone";
+
+    // Build query to get distinct agents matching the search term
+    const baseUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties`;
+    const accessToken = `access_token=${paragonApiConfig.serverToken}`;
+
+    const filter = `contains(tolower(${agentField}),'${q.toLowerCase()}')`;
+    const select = `${agentField},${agentMlsField},${agentPhoneField}`;
+
+    const apiUrl = `${baseUrl}?${accessToken}&$filter=${encodeURIComponent(
+      filter
+    )}&$select=${encodeURIComponent(select)}&$top=${limit * 3}`;
+
+    console.log(
+      `Agent suggestions query for "${q}":`,
+      apiUrl.replace(paragonApiConfig.serverToken, "***")
+    );
+
+    const response = await fetch(apiUrl);
+
+    if (!response.ok) {
+      throw new Error(
+        `Paragon API error: ${response.status} ${response.statusText}`
+      );
+    }
+
+    const data = await response.json();
+    const properties = data.value || [];
+
+    // Extract unique agents
+    const agentMap = new Map();
+
+    properties.forEach((property) => {
+      const name = property[agentField];
+      const mlsId = property[agentMlsField];
+      const phone = property[agentPhoneField];
+
+      if (name && name.trim()) {
+        const key = `${name.trim().toLowerCase()}_${mlsId || ""}`;
+        if (!agentMap.has(key)) {
+          agentMap.set(key, {
+            name: name.trim(),
+            mlsId: mlsId || "",
+            phone: phone || "",
+            type: type,
+          });
+        }
+      }
+    });
+
+    // Convert to array and limit results
+    const suggestions = Array.from(agentMap.values())
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, limit);
+
+    res.json({
+      success: true,
+      count: suggestions.length,
+      suggestions,
+      query: q,
+      type,
+    });
+  } catch (error) {
+    console.error("Error fetching agent suggestions:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      query: q,
+      type,
+    });
   }
 });
 
-module.exports = app;
+// --- TEAM MANAGEMENT APIs ---
+
+// Get all teams
+app.get("/api/teams", (req, res) => {
+  try {
+    const allTeams = Array.from(teams.values()).map((team) => ({
+      id: team.id,
+      name: team.name,
+      description: team.description,
+      memberCount: team.members.length,
+      created_at: team.created_at,
+      members: team.members, // Include members for easier frontend use
+    }));
+
+    res.json({
+      success: true,
+      count: allTeams.length,
+      teams: allTeams,
+    });
+  } catch (error) {
+    console.error("[TEAMS] Error getting teams:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Create new team
+app.post("/api/teams", (req, res) => {
+  try {
+    const { name, description = "" } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: "Team name is required",
+      });
+    }
+
+    const newTeam = {
+      id: teamIdCounter++,
+      name: name.trim(),
+      description: description.trim(),
+      members: [],
+      created_at: new Date().toISOString(),
+    };
+
+    teams.set(newTeam.id, newTeam);
+
+    console.log(`[TEAMS] Created team: ${newTeam.name} (ID: ${newTeam.id})`);
+
+    res.status(201).json({
+      success: true,
+      team: newTeam,
+      message: "Team created successfully",
+    });
+  } catch (error) {
+    console.error("[TEAMS] Error creating team:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Get specific team
+app.get("/api/teams/:teamId", (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      team: team,
+    });
+  } catch (error) {
+    console.error("[TEAMS] Error getting team:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Update team
+app.put("/api/teams/:teamId", (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    const { name, description } = req.body;
+
+    if (name && name.trim()) {
+      team.name = name.trim();
+    }
+    if (description !== undefined) {
+      team.description = description.trim();
+    }
+
+    team.updated_at = new Date().toISOString();
+    teams.set(teamId, team);
+
+    console.log(`[TEAMS] Updated team: ${team.name} (ID: ${teamId})`);
+
+    res.json({
+      success: true,
+      team: team,
+      message: "Team updated successfully",
+    });
+  } catch (error) {
+    console.error("[TEAMS] Error updating team:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Delete team
+app.delete("/api/teams/:teamId", (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    teams.delete(teamId);
+
+    console.log(`[TEAMS] Deleted team: ${team.name} (ID: ${teamId})`);
+
+    res.json({
+      success: true,
+      message: "Team deleted successfully",
+      deletedTeam: { id: teamId, name: team.name },
+    });
+  } catch (error) {
+    console.error("[TEAMS] Error deleting team:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// --- TEAM MEMBERS APIs ---
+
+// Get team members
+app.get("/api/teams/:teamId/members", (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      teamId: teamId,
+      teamName: team.name,
+      count: team.members.length,
+      members: team.members,
+    });
+  } catch (error) {
+    console.error("[TEAM MEMBERS] Error getting members:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Add member to team
+app.post("/api/teams/:teamId/members", (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    const { agent_name, agent_mls_id, agent_phone = "" } = req.body;
+
+    if (!agent_name || !agent_mls_id) {
+      return res.status(400).json({
+        success: false,
+        error: "agent_name and agent_mls_id are required",
+      });
+    }
+
+    // Check if agent already in team
+    const existingMember = team.members.find(
+      (m) => m.agent_mls_id === agent_mls_id
+    );
+    if (existingMember) {
+      return res.status(400).json({
+        success: false,
+        error: "Agent already in team",
+        existingMember: existingMember,
+      });
+    }
+
+    const newMember = {
+      id: team.members.length + 1,
+      agent_name: agent_name.trim(),
+      agent_mls_id: agent_mls_id.trim(),
+      agent_phone: agent_phone.trim(),
+      added_at: new Date().toISOString(),
+    };
+
+    team.members.push(newMember);
+    teams.set(teamId, team);
+
+    console.log(`[TEAM MEMBERS] Added ${agent_name} to team ${team.name}`);
+
+    res.status(201).json({
+      success: true,
+      member: newMember,
+      team: {
+        id: team.id,
+        name: team.name,
+        memberCount: team.members.length,
+      },
+      message: "Member added to team successfully",
+    });
+  } catch (error) {
+    console.error("[TEAM MEMBERS] Error adding member:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Remove member from team
+app.delete("/api/teams/:teamId/members/:memberId", (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const memberId = parseInt(req.params.memberId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    const memberIndex = team.members.findIndex((m) => m.id === memberId);
+    if (memberIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        error: "Member not found in team",
+      });
+    }
+
+    const removedMember = team.members.splice(memberIndex, 1)[0];
+    teams.set(teamId, team);
+
+    console.log(
+      `[TEAM MEMBERS] Removed ${removedMember.agent_name} from team ${team.name}`
+    );
+
+    res.json({
+      success: true,
+      message: "Member removed from team successfully",
+      removedMember: removedMember,
+      team: {
+        id: team.id,
+        name: team.name,
+        memberCount: team.members.length,
+      },
+    });
+  } catch (error) {
+    console.error("[TEAM MEMBERS] Error removing member:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// --- FEATURED LISTINGS API ---
+
+// Get featured listings for a team (team properties first, then others)
+app.get("/api/teams/:teamId/featured-listings", async (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    if (team.members.length === 0) {
+      return res.json({
+        success: true,
+        teamId: teamId,
+        teamName: team.name,
+        count: 0,
+        teamProperties: [],
+        otherProperties: [],
+        message: "No team members found",
+      });
+    }
+
+    const {
+      city,
+      status = "Active",
+      limit = 50,
+      include_others = "true",
+    } = req.query;
+
+    // Get team member IDs
+    const teamAgentIds = team.members.map((m) => m.agent_mls_id).join(",");
+
+    console.log(
+      `[FEATURED LISTINGS] Getting listings for team ${team.name}, agents: ${teamAgentIds}`
+    );
+
+    // Build API call for team properties (reusing existing team-properties logic)
+    const baseFilters = [];
+
+    // Agent filter for team members
+    const idList = teamAgentIds
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+    const agentFilter = idList
+      .map((id) => `ListAgentMlsId eq '${id}'`)
+      .join(" or ");
+    baseFilters.push(`(${agentFilter})`);
+
+    // Location filter
+    if (city) {
+      baseFilters.push(`tolower(City) eq '${city.toLowerCase()}'`);
+    }
+
+    // Status filter
+    if (status === "Active") {
+      baseFilters.push(`StandardStatus eq 'Active'`);
+    } else if (status === "Sold") {
+      baseFilters.push(`StandardStatus eq 'Closed'`);
+      const cutoffDate = new Date();
+      cutoffDate.setMonth(cutoffDate.getMonth() - 12);
+      const dateFilter = cutoffDate.toISOString().split("T")[0];
+      baseFilters.push(`CloseDate ge ${dateFilter}`);
+    }
+
+    const filterString = baseFilters.join(" and ");
+
+    // Select fields
+    const selectFields = [
+      "UnparsedAddress",
+      "City",
+      "StateOrProvince",
+      "PostalCode",
+      "ListPrice",
+      "ClosePrice",
+      "LivingArea",
+      "AboveGradeFinishedArea",
+      "BelowGradeFinishedArea",
+      "BedroomsTotal",
+      "BathroomsTotalInteger",
+      "GarageSpaces",
+      "YearBuilt",
+      "StandardStatus",
+      "CloseDate",
+      "OnMarketDate",
+      "Media",
+      "ListingKey",
+      "ListingId",
+      "PropertyType",
+      "PropertyCondition",
+      "ArchitecturalStyle",
+      "SubdivisionName",
+      "Latitude",
+      "Longitude",
+      "LotSizeAcres",
+      "ListAgentFullName",
+      "ListAgentMlsId",
+      "ListAgentPreferredPhone",
+      "PublicRemarks",
+    ].join(",");
+
+    // Build API URL
+    const apiUrl =
+      `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?` +
+      `access_token=${paragonApiConfig.serverToken}&` +
+      `$filter=${encodeURIComponent(filterString)}&` +
+      `$select=${selectFields}&` +
+      `$orderby=ListPrice desc&` +
+      `$top=${limit}`;
+
+    // Make API request
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+      throw new Error(
+        `Paragon API error: ${response.status} ${response.statusText}`
+      );
+    }
+
+    const data = await response.json();
+    const teamProperties = (data.value || []).map((property) => {
+      const sqftValue =
+        property.LivingArea || property.AboveGradeFinishedArea || 0;
+      const totalSqft = sqftValue + (property.BelowGradeFinishedArea || 0);
+      const price =
+        status === "Sold" ? property.ClosePrice : property.ListPrice;
+      const pricePerSqft =
+        price && sqftValue > 0 ? Math.round(price / sqftValue) : 0;
+
+      const primaryImage =
+        property.Media && property.Media.length > 0
+          ? property.Media[0].MediaURL || property.Media[0].PreferredPhotoURL
+          : null;
+
+      return {
+        id: property.ListingKey,
+        mlsNumber: property.ListingId,
+        address: property.UnparsedAddress || "",
+        city: property.City || "",
+        state: property.StateOrProvince || "",
+        zipCode: property.PostalCode || "",
+        listPrice: property.ListPrice || 0,
+        soldPrice: property.ClosePrice || 0,
+        sqft: sqftValue,
+        totalSqft,
+        beds: property.BedroomsTotal || 0,
+        baths: property.BathroomsTotalInteger || 0,
+        garage: property.GarageSpaces || 0,
+        yearBuilt: property.YearBuilt || null,
+        status: property.StandardStatus || "",
+        closeDate: property.CloseDate || null,
+        onMarketDate: property.OnMarketDate || null,
+        pricePerSqft,
+        propertyType: property.PropertyType || "",
+        condition: property.PropertyCondition || "",
+        style: property.ArchitecturalStyle || "",
+        subdivision: property.SubdivisionName || "",
+        latitude: property.Latitude || null,
+        longitude: property.Longitude || null,
+        description: property.PublicRemarks || "",
+        imageUrl: primaryImage,
+        images: property.Media
+          ? property.Media.map((m) => m.MediaURL || m.PreferredPhotoURL).filter(
+              Boolean
+            )
+          : [],
+        listAgent: {
+          name: property.ListAgentFullName || "",
+          mlsId: property.ListAgentMlsId || "",
+          phone: property.ListAgentPreferredPhone || "",
+        },
+        isFeatured: true,
+        isTeamProperty: true,
+      };
+    });
+
+    // TODO: Add "other properties" logic here if include_others=true
+    // For now, just return team properties
+    const otherProperties = [];
+
+    res.json({
+      success: true,
+      teamId: teamId,
+      teamName: team.name,
+      teamMembers: team.members.length,
+      count: teamProperties.length + otherProperties.length,
+      teamPropertiesCount: teamProperties.length,
+      otherPropertiesCount: otherProperties.length,
+      teamProperties: teamProperties,
+      otherProperties: otherProperties,
+      searchCriteria: {
+        city,
+        status,
+        limit,
+        include_others,
+      },
+      meta: {
+        teamAgentIds: teamAgentIds,
+        priorityOrder: "Team properties first, then others",
+      },
+    });
+  } catch (error) {
+    console.error("[FEATURED LISTINGS] Error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// --- 6. Start ---
+app.listen(PORT, () =>
+  console.log(`Server running at http://localhost:${PORT}`)
+);
