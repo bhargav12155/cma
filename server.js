@@ -82,6 +82,27 @@ async function getBearerToken() {
 
 const GEMINI_API_KEY = "AIzaSyACKfnIE47Ig4PZyzjygfV9VZxUKK0NPI0";
 
+// --- In-Memory Team Storage ---
+let teams = new Map(); // teamId -> team object
+let teamIdCounter = 1;
+
+// Team data structure:
+// {
+//   id: 1,
+//   name: "Golden Brick Team",
+//   description: "Premium agents",
+//   members: [
+//     {
+//       id: 1,
+//       agent_name: "Mike Bjork",
+//       agent_mls_id: "969503",
+//       agent_phone: "402-522-6131",
+//       added_at: "2025-09-05T..."
+//     }
+//   ],
+//   created_at: "2025-09-05T..."
+// }
+
 // --- 5. Endpoints ---
 
 // Root health
@@ -139,9 +160,13 @@ app.get("/api/test-config", (req, res) => {
 // Comprehensive Property Search API - covers all filter options
 app.get("/api/property-search", async (req, res) => {
   const {
+    // Property ID filters
+    mls_number,
+    listing_id,
+    id,
+
     // Location filters
     city,
-    state = "NE",
     zip_code,
     latitude,
     longitude,
@@ -152,8 +177,8 @@ app.get("/api/property-search", async (req, res) => {
     max_price,
     price_range, // e.g., "500k+" which means 500000+
 
-    // Property type filters
-    property_type = "House", // House, Condo, Townhouse, etc.
+    // Property type filters (default 'All' so we don't unintentionally filter MLS lookups)
+    property_type = "All", // House, Condo, Townhouse, etc.  ('All' means no filter)
 
     // Size filters
     min_sqft,
@@ -165,7 +190,7 @@ app.get("/api/property-search", async (req, res) => {
     max_baths,
 
     // Status filters
-    status = "For Sale", // "For Sale", "Sold", "All"
+    status, // "For Sale", "Sold", "All" - NO DEFAULT VALUE
 
     // Additional filters
     min_year_built,
@@ -187,12 +212,14 @@ app.get("/api/property-search", async (req, res) => {
     // Build base filters array
     let filters = [];
 
+    // Property ID filters - search in ALL properties (not just active)
+    if (mls_number) filters.push(`ListingId eq '${mls_number}'`);
+    if (listing_id) filters.push(`ListingId eq '${listing_id}'`);
+    if (id) filters.push(`ListingKey eq '${id}'`);
+
     // Location filters
     if (city) {
       filters.push(`tolower(City) eq '${city.toLowerCase()}'`);
-    }
-    if (state) {
-      filters.push(`tolower(StateOrProvince) eq '${state.toLowerCase()}'`);
     }
     if (zip_code) {
       filters.push(`PostalCode eq '${zip_code}'`);
@@ -232,8 +259,20 @@ app.get("/api/property-search", async (req, res) => {
       filters.push(`(${priceQuery})`);
     }
 
+    // Determine if this is a direct MLS / Listing lookup
+    const isMlsLookup = !!(mls_number || listing_id || id);
+
     // Property type filter
-    if (property_type && property_type !== "All") {
+    // For direct MLS lookups we ONLY apply a property type filter if the caller explicitly passed property_type
+    const propertyTypeExplicitlyProvided = Object.prototype.hasOwnProperty.call(
+      req.query,
+      "property_type"
+    );
+    if (
+      property_type &&
+      property_type !== "All" &&
+      (!isMlsLookup || propertyTypeExplicitlyProvided)
+    ) {
       filters.push(`PropertyType eq '${property_type}'`);
     }
 
@@ -269,7 +308,7 @@ app.get("/api/property-search", async (req, res) => {
       filters.push(`BathroomsTotalInteger le ${max_baths}`);
     }
 
-    // Status filter
+    // Status filter - ONLY apply if explicitly requested
     if (status === "For Sale") {
       filters.push(`StandardStatus eq 'Active'`);
     } else if (status === "Sold") {
@@ -280,6 +319,7 @@ app.get("/api/property-search", async (req, res) => {
       const dateFilter = cutoffDate.toISOString().split("T")[0];
       filters.push(`CloseDate ge ${dateFilter}`);
     }
+    // If no status is specified, return ALL properties (Active, Closed, Expired, etc.)
 
     // Year built filters
     if (min_year_built) {
@@ -450,6 +490,7 @@ app.get("/api/cma-comparables", async (req, res) => {
   const {
     address,
     city,
+    zip_code,
     sqft,
     latitude,
     longitude,
@@ -465,6 +506,7 @@ app.get("/api/cma-comparables", async (req, res) => {
     same_subdivision,
     min_price,
     max_price,
+    property_type,
   } = req.query;
 
   //console.log("Received CMA comparables request:", req.query);
@@ -628,6 +670,17 @@ app.get("/api/cma-comparables", async (req, res) => {
       );
     }
 
+    // Property type filter
+    if (property_type && property_type !== "All") {
+      baseFilters.push(`PropertyType eq '${property_type}'`);
+    }
+
+    // Zip code filter
+    if (zip_code) {
+      console.log("Adding zip_code filter for CMA:", zip_code);
+      baseFilters.push(`PostalCode eq '${zip_code}'`);
+    }
+
     // Define the core fields we need for CMA
     const selectFields = [
       "UnparsedAddress",
@@ -664,6 +717,7 @@ app.get("/api/cma-comparables", async (req, res) => {
     // Build Active Properties query
     const activeFilters = [...baseFilters, "StandardStatus eq 'Active'"];
     const activeFilterString = activeFilters.join(" and ");
+    console.log("Active filters:", activeFilterString);
     const activeUrl =
       `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?` +
       `access_token=${paragonApiConfig.serverToken}&` +
@@ -1034,7 +1088,6 @@ app.get("/api/property-search-new", async (req, res) => {
     // Location filters
     address,
     city,
-    state = "NE",
     zip_code,
     subdivision,
     radius_miles = 5,
@@ -1111,8 +1164,6 @@ app.get("/api/property-search-new", async (req, res) => {
       );
     }
     if (city) filters.push(`tolower(City) eq '${city.toLowerCase()}'`);
-    if (state)
-      filters.push(`tolower(StateOrProvince) eq '${state.toLowerCase()}'`);
     if (zip_code) filters.push(`PostalCode eq '${zip_code}'`);
     if (subdivision)
       filters.push(
@@ -1176,7 +1227,124 @@ app.get("/api/property-search-new", async (req, res) => {
     const response = await fetch(url);
     const data = await response.json();
 
-    // Process properties to add computed fields like imageUrl, distance_miles, etc.
+    // Helper function to extract ZIP code and state from address
+    const extractLocationFromAddress = (address) => {
+      if (!address) return { zipCode: null, state: null };
+
+      // Extract ZIP code (5 digits, optionally followed by -4 digits)
+      const zipMatch = address.match(/\b(\d{5}(?:-\d{4})?)\b/);
+      const zipCode = zipMatch ? zipMatch[1] : null;
+
+      // Extract state (2-letter state code, typically before ZIP)
+      const stateMatch = address.match(/\b([A-Z]{2})\s+\d{5}/);
+      const state = stateMatch ? stateMatch[1] : null;
+
+      return { zipCode, state };
+    };
+
+    // 🔧 PRICE VALIDATION & CORRECTION FUNCTION
+    const validateAndCorrectPrice = (rawPrice, propertyType, sqft, address) => {
+      if (!rawPrice || rawPrice <= 0) return null;
+
+      // Convert to number if string
+      const price =
+        typeof rawPrice === "string" ? parseFloat(rawPrice) : rawPrice;
+
+      // Define reasonable price ranges by property type (for Nebraska market)
+      const priceRanges = {
+        Residential: { min: 50000, max: 5000000 },
+        "Commercial Sale": { min: 100000, max: 50000000 },
+        "Commercial Lease": { min: 100000, max: 50000000 },
+        Land: { min: 10000, max: 100000000 }, // Land can vary widely
+        "Residential Income": { min: 75000, max: 10000000 },
+      };
+
+      const range = priceRanges[propertyType] || priceRanges["Residential"];
+
+      // Check for obvious data corruption patterns
+      const priceStr = price.toString();
+
+      // Pattern 1: Specific fix for 448950556 -> 448950 (remove last 3 digits)
+      if (price === 448950556) {
+        console.warn(
+          `🔧 PRICE CORRECTION: ${address} - Fixed known corrupted price ${price} to 448950`
+        );
+        return 448950;
+      }
+
+      // Pattern 2: Price ends with repeated or suspicious digit patterns
+      if (price > range.max && priceStr.length >= 8) {
+        // Try removing the last 2-3 digits if they look like corruption
+        for (let divisor of [100, 1000, 10000]) {
+          const correctedPrice = Math.floor(price / divisor);
+          if (correctedPrice >= range.min && correctedPrice <= range.max) {
+            // Check if this looks like a reasonable price for the area
+            if (sqft > 0) {
+              const pricePerSqft = correctedPrice / sqft;
+              if (pricePerSqft >= 100 && pricePerSqft <= 1000) {
+                // Reasonable price per sqft
+                console.warn(
+                  `🔧 PRICE CORRECTION: ${address} - Changed ${price} to ${correctedPrice} (removed ${
+                    price / correctedPrice
+                  }x factor)`
+                );
+                return correctedPrice;
+              }
+            } else {
+              console.warn(
+                `🔧 PRICE CORRECTION: ${address} - Changed ${price} to ${correctedPrice} (removed ${
+                  price / correctedPrice
+                }x factor)`
+              );
+              return correctedPrice;
+            }
+          }
+        }
+      }
+
+      // Pattern 3: Unrealistic price per square foot (>$2000/sqft is suspicious for residential)
+      if (sqft > 0 && propertyType === "Residential") {
+        const pricePerSqft = price / sqft;
+        if (pricePerSqft > 2000) {
+          // Try to find a reasonable price by dividing
+          for (let divisor of [10, 100, 1000]) {
+            const correctedPrice = Math.floor(price / divisor);
+            const newPricePerSqft = correctedPrice / sqft;
+            if (
+              correctedPrice >= range.min &&
+              correctedPrice <= range.max &&
+              newPricePerSqft >= 100 &&
+              newPricePerSqft <= 1000
+            ) {
+              console.warn(
+                `🔧 PRICE CORRECTION: ${address} - Changed ${price} to ${correctedPrice} (unrealistic price per sqft: $${Math.round(
+                  pricePerSqft
+                )} -> $${Math.round(newPricePerSqft)})`
+              );
+              return correctedPrice;
+            }
+          }
+        }
+      }
+
+      // Pattern 4: Price way outside reasonable range
+      if (price > range.max) {
+        console.warn(
+          `⚠️ SUSPICIOUS PRICE: ${address} - ${propertyType} priced at $${price.toLocaleString()} (above max $${range.max.toLocaleString()})`
+        );
+        // Don't auto-correct if we can't identify pattern, but flag it
+        return price; // Return original but logged as suspicious
+      }
+
+      if (price < range.min) {
+        console.warn(
+          `⚠️ SUSPICIOUS PRICE: ${address} - ${propertyType} priced at $${price.toLocaleString()} (below min $${range.min.toLocaleString()})`
+        );
+        return price; // Return original but logged as suspicious
+      }
+
+      return price; // Price seems reasonable
+    }; // Process properties to add computed fields like imageUrl, distance_miles, etc.
     const processedProperties = (data.value || []).map((prop, index) => {
       // Calculate distance if coordinates are provided
       let distance_miles = null;
@@ -1194,14 +1362,33 @@ app.get("/api/property-search-new", async (req, res) => {
         );
       }
 
+      // Extract ZIP code and state from address if not available as separate fields
+      const { zipCode: extractedZip, state: extractedState } =
+        extractLocationFromAddress(prop.UnparsedAddress);
+
       // Determine if property is active
       const isActive = prop.StandardStatus === "Active";
 
       // Extract square footage - use AboveGradeFinishedArea as primary
       const sqftValue = prop.AboveGradeFinishedArea || prop.LivingArea || 0;
 
-      // Calculate price and price per sqft
-      const price = isActive ? prop.ListPrice : prop.ClosePrice;
+      // 🔧 VALIDATE AND CORRECT PRICES BEFORE PROCESSING
+      const validatedListPrice = validateAndCorrectPrice(
+        prop.ListPrice,
+        prop.PropertyType,
+        sqftValue,
+        prop.UnparsedAddress
+      );
+
+      const validatedClosePrice = validateAndCorrectPrice(
+        prop.ClosePrice,
+        prop.PropertyType,
+        sqftValue,
+        prop.UnparsedAddress
+      );
+
+      // Calculate price and price per sqft using validated prices
+      const price = isActive ? validatedListPrice : validatedClosePrice;
       const totalSqft = sqftValue + (prop.BelowGradeFinishedArea || 0);
       const pricePerSqft =
         price && totalSqft ? Math.round(price / totalSqft) : 0;
@@ -1210,30 +1397,54 @@ app.get("/api/property-search-new", async (req, res) => {
         id: prop.ListingKey,
         address: prop.UnparsedAddress,
         city: prop.City,
-        listPrice: prop.ListPrice,
-        soldPrice: prop.ClosePrice,
+
+        // ✅ CRITICAL MISSING FIELDS ADDED:
+        zipCode: prop.PostalCode || extractedZip, // First try PostalCode field, then extract from address
+        state: prop.StateOrProvince || extractedState, // First try StateOrProvince field, then extract from address
+        description: prop.PublicRemarks || prop.PrivateRemarks || "", // Property description
+
+        // 🔧 VALIDATED PRICES (corrected for data corruption)
+        listPrice: validatedListPrice,
+        soldPrice: validatedClosePrice,
         sqft: sqftValue,
-        basementSqft: prop.BelowGradeFinishedArea,
-        totalSqft,
+        basementSqft: prop.BelowGradeFinishedArea || 0, // Ensure it's not null
+        totalSqft: totalSqft > 0 ? totalSqft : sqftValue, // Ensure it's not 0 if we have sqft
+
+        // ✅ BATHROOM FIELD (already existed but clarified):
+        baths: prop.BathroomsTotalInteger || prop.BathroomsTotal || 0, // HIGH PRIORITY - bathroom count
+
         beds: prop.BedroomsTotal,
-        baths: prop.BathroomsTotalInteger || prop.BathroomsTotal,
         garage: prop.GarageSpaces,
         yearBuilt: prop.YearBuilt,
+
+        // ✅ NICE-TO-HAVE FIELDS ADDED:
+        lotSizeSqft:
+          prop.LotSizeSquareFeet || prop.LotSizeAcres
+            ? prop.LotSizeAcres * 43560
+            : null, // Convert acres to sqft if needed
+
         status: prop.StandardStatus,
         closeDate: prop.CloseDate,
         onMarketDate: prop.OnMarketDate,
         pricePerSqft,
         propertyType: prop.PropertyType,
+
+        // ✅ IMPROVED CONDITION MAPPING:
         condition:
           Array.isArray(prop.PropertyCondition) &&
           prop.PropertyCondition.length > 0
-            ? prop.PropertyCondition[0]
-            : "Average",
+            ? prop.PropertyCondition.join(", ") // Join multiple conditions
+            : prop.PropertyCondition || "Average",
+
+        // ✅ IMPROVED STYLE MAPPING:
         style:
           Array.isArray(prop.ArchitecturalStyle) &&
           prop.ArchitecturalStyle.length > 0
-            ? prop.ArchitecturalStyle[0]
-            : "",
+            ? prop.ArchitecturalStyle // Return array of styles instead of just first one
+            : prop.ArchitecturalStyle
+            ? [prop.ArchitecturalStyle]
+            : [],
+
         subdivision: prop.SubdivisionName || "",
         latitude: prop.Latitude,
         longitude: prop.Longitude,
@@ -1475,16 +1686,16 @@ app.get("/api/property-count", async (req, res) => {
   }
 
   try {
-    const { status = 'Active' } = req.query;
+    const { status = "Active" } = req.query;
 
     // Get count for different property statuses
-    const statuses = ['Active', 'Closed', 'Pending', 'Expired', 'Withdrawn'];
+    const statuses = ["Active", "Closed", "Pending", "Expired", "Withdrawn"];
     const counts = {};
 
     for (const currentStatus of statuses) {
       try {
         const countUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Property?$filter=StandardStatus eq '${currentStatus}'&$count=true&$top=0`;
-        
+
         const response = await fetch(countUrl, {
           headers: {
             Authorization: `Bearer ${paragonApiConfig.serverToken}`,
@@ -1494,12 +1705,12 @@ app.get("/api/property-count", async (req, res) => {
 
         if (response.ok) {
           const data = await response.json();
-          counts[currentStatus] = data['@odata.count'] || 0;
+          counts[currentStatus] = data["@odata.count"] || 0;
         } else {
-          counts[currentStatus] = 'unknown';
+          counts[currentStatus] = "unknown";
         }
       } catch (error) {
-        counts[currentStatus] = 'error';
+        counts[currentStatus] = "error";
       }
     }
 
@@ -1515,23 +1726,23 @@ app.get("/api/property-count", async (req, res) => {
 
       if (totalResponse.ok) {
         const totalData = await totalResponse.json();
-        counts.total = totalData['@odata.count'] || 0;
+        counts.total = totalData["@odata.count"] || 0;
       } else {
-        counts.total = 'unknown';
+        counts.total = "unknown";
       }
     } catch (error) {
-      counts.total = 'error';
+      counts.total = "error";
     }
 
     res.json({
       message: "Property counts by status",
       counts,
       note: "These are the actual counts available in your Paragon dataset",
-      recommendation: counts.total > 150 ? 
-        "Use pagination (limit/offset) to access all properties" : 
-        "You have access to all available properties"
+      recommendation:
+        counts.total > 150
+          ? "Use pagination (limit/offset) to access all properties"
+          : "You have access to all available properties",
     });
-
   } catch (error) {
     console.error("Property count error:", error);
     res.status(500).json({
@@ -1555,7 +1766,7 @@ app.get("/api/mls-fields", async (req, res) => {
   try {
     // Get a small sample to analyze available fields
     const searchUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Property?$top=5`;
-    
+
     const response = await fetch(searchUrl, {
       headers: {
         Authorization: `Bearer ${paragonApiConfig.serverToken}`,
@@ -1583,42 +1794,68 @@ app.get("/api/mls-fields", async (req, res) => {
 
     // Categorize fields for easier understanding
     const fieldCategories = {
-      identification: allFields.filter(field => 
-        /^(ListingKey|PropertyId|ListingId|MlsStatus|StandardStatus)/i.test(field)
+      identification: allFields.filter((field) =>
+        /^(ListingKey|PropertyId|ListingId|MlsStatus|StandardStatus)/i.test(
+          field
+        )
       ),
-      location: allFields.filter(field => 
-        /^(Address|City|State|Province|Postal|County|Latitude|Longitude|Coordinates)/i.test(field)
+      location: allFields.filter((field) =>
+        /^(Address|City|State|Province|Postal|County|Latitude|Longitude|Coordinates)/i.test(
+          field
+        )
       ),
-      physical: allFields.filter(field => 
-        /^(LivingArea|Bedrooms|Bathrooms|Stories|YearBuilt|LotSize|PropertyType|PropertySubType)/i.test(field)
+      physical: allFields.filter((field) =>
+        /^(LivingArea|Bedrooms|Bathrooms|Stories|YearBuilt|LotSize|PropertyType|PropertySubType)/i.test(
+          field
+        )
       ),
-      pricing: allFields.filter(field => 
-        /^(ListPrice|ClosePrice|Original|Tax|Assessment|Association)/i.test(field)
+      pricing: allFields.filter((field) =>
+        /^(ListPrice|ClosePrice|Original|Tax|Assessment|Association)/i.test(
+          field
+        )
       ),
-      features: allFields.filter(field => 
-        /^(Pool|Fireplace|Garage|Parking|Basement|Heating|Cooling|Appliances)/i.test(field)
+      features: allFields.filter((field) =>
+        /^(Pool|Fireplace|Garage|Parking|Basement|Heating|Cooling|Appliances)/i.test(
+          field
+        )
       ),
-      listing: allFields.filter(field => 
-        /^(DaysOnMarket|OnMarket|Close|Contract|Agent|Office|Remarks)/i.test(field)
+      listing: allFields.filter((field) =>
+        /^(DaysOnMarket|OnMarket|Close|Contract|Agent|Office|Remarks)/i.test(
+          field
+        )
       ),
-      media: allFields.filter(field => 
+      media: allFields.filter((field) =>
         /^(Media|Photo|Virtual|Image)/i.test(field)
       ),
-      other: allFields.filter(field => 
-        !/(ListingKey|PropertyId|ListingId|MlsStatus|StandardStatus|Address|City|State|Province|Postal|County|Latitude|Longitude|Coordinates|LivingArea|Bedrooms|Bathrooms|Stories|YearBuilt|LotSize|PropertyType|PropertySubType|ListPrice|ClosePrice|Original|Tax|Assessment|Association|Pool|Fireplace|Garage|Parking|Basement|Heating|Cooling|Appliances|DaysOnMarket|OnMarket|Close|Contract|Agent|Office|Remarks|Media|Photo|Virtual|Image)/i.test(field)
+      other: allFields.filter(
+        (field) =>
+          !/(ListingKey|PropertyId|ListingId|MlsStatus|StandardStatus|Address|City|State|Province|Postal|County|Latitude|Longitude|Coordinates|LivingArea|Bedrooms|Bathrooms|Stories|YearBuilt|LotSize|PropertyType|PropertySubType|ListPrice|ClosePrice|Original|Tax|Assessment|Association|Pool|Fireplace|Garage|Parking|Basement|Heating|Cooling|Appliances|DaysOnMarket|OnMarket|Close|Contract|Agent|Office|Remarks|Media|Photo|Virtual|Image)/i.test(
+            field
+          )
       ),
     };
 
     // Sample values for key fields
     const fieldSamples = {};
     const importantFields = [
-      'PropertyType', 'PropertySubType', 'StandardStatus', 'Heating', 'Cooling',
-      'Basement', 'PoolPrivateYN', 'FireplacesTotal', 'GarageSpaces',
-      'Appliances', 'Flooring', 'BuildingFeatures', 'InteriorFeatures',
-      'ExteriorFeatures', 'ArchitecturalStyle'
+      "PropertyType",
+      "PropertySubType",
+      "StandardStatus",
+      "Heating",
+      "Cooling",
+      "Basement",
+      "PoolPrivateYN",
+      "FireplacesTotal",
+      "GarageSpaces",
+      "Appliances",
+      "Flooring",
+      "BuildingFeatures",
+      "InteriorFeatures",
+      "ExteriorFeatures",
+      "ArchitecturalStyle",
     ];
 
-    importantFields.forEach(field => {
+    importantFields.forEach((field) => {
       if (sampleProperty[field] !== undefined) {
         fieldSamples[field] = sampleProperty[field];
       }
@@ -1632,7 +1869,6 @@ app.get("/api/mls-fields", async (req, res) => {
       fieldSamples,
       sampleProperty: properties[0], // Full sample for reference
     });
-
   } catch (error) {
     console.error("MLS Fields Discovery Error:", error);
     res.status(500).json({
@@ -1659,14 +1895,14 @@ app.get("/api/advanced-search", async (req, res) => {
       city,
       state,
       zipCode,
-      
+
       // Property type filters
       propertyType, // Any Type, Residential, Condo, Townhouse, etc.
-      
+
       // Price range
       minPrice,
       maxPrice,
-      
+
       // Size filters
       minBedrooms,
       maxBedrooms,
@@ -1674,15 +1910,15 @@ app.get("/api/advanced-search", async (req, res) => {
       maxBathrooms,
       minSqft,
       maxSqft,
-      
+
       // Lot size
       minLotSize,
       maxLotSize,
-      
+
       // Age filters
       minYearBuilt,
       maxYearBuilt,
-      
+
       // Features (boolean filters)
       hasPool,
       hasFireplace,
@@ -1694,17 +1930,16 @@ app.get("/api/advanced-search", async (req, res) => {
       hasWalkInCloset,
       hasMasterSuite,
       isNewConstruction,
-      
+
       // Sorting
       sortBy, // newest, price_low, price_high, sqft_low, sqft_high, dom_low, dom_high
-      
+
       // Status filter
       status, // Active, Closed, Pending, etc.
-      
+
       // Pagination
       limit = 50,
       offset = 0,
-      
     } = req.query;
 
     // Build OData filter array
@@ -1716,7 +1951,7 @@ app.get("/api/advanced-search", async (req, res) => {
     if (zipCode) filters.push(`PostalCode eq '${zipCode}'`);
 
     // Property type
-    if (propertyType && propertyType !== 'Any Type') {
+    if (propertyType && propertyType !== "Any Type") {
       filters.push(`PropertyType eq '${propertyType}'`);
     }
 
@@ -1741,31 +1976,40 @@ app.get("/api/advanced-search", async (req, res) => {
     if (maxYearBuilt) filters.push(`YearBuilt le ${maxYearBuilt}`);
 
     // Feature filters
-    if (hasPool === 'true') filters.push(`PoolPrivateYN eq true`);
-    if (hasFireplace === 'true') filters.push(`FireplacesTotal gt 0`);
-    if (hasGarage === 'true') filters.push(`GarageSpaces gt 0`);
-    if (hasBasement === 'true') filters.push(`(Basement ne null and Basement ne '')`);
-    if (isNewConstruction === 'true') filters.push(`NewConstructionYN eq true`);
+    if (hasPool === "true") filters.push(`PoolPrivateYN eq true`);
+    if (hasFireplace === "true") filters.push(`FireplacesTotal gt 0`);
+    if (hasGarage === "true") filters.push(`GarageSpaces gt 0`);
+    if (hasBasement === "true")
+      filters.push(`(Basement ne null and Basement ne '')`);
+    if (isNewConstruction === "true") filters.push(`NewConstructionYN eq true`);
 
     // Feature filters using contains (for text fields)
-    if (hasUpdatedKitchen === 'true') {
-      filters.push(`(contains(tolower(InteriorFeatures),'updated kitchen') or contains(tolower(InteriorFeatures),'remodeled kitchen') or contains(tolower(InteriorFeatures),'renovated kitchen'))`);
+    if (hasUpdatedKitchen === "true") {
+      filters.push(
+        `(contains(tolower(InteriorFeatures),'updated kitchen') or contains(tolower(InteriorFeatures),'remodeled kitchen') or contains(tolower(InteriorFeatures),'renovated kitchen'))`
+      );
     }
-    if (hasHardwoodFloors === 'true') {
-      filters.push(`(contains(tolower(Flooring),'hardwood') or contains(tolower(Flooring),'wood floor'))`);
+    if (hasHardwoodFloors === "true") {
+      filters.push(
+        `(contains(tolower(Flooring),'hardwood') or contains(tolower(Flooring),'wood floor'))`
+      );
     }
-    if (hasDeckPatio === 'true') {
-      filters.push(`(contains(tolower(ExteriorFeatures),'deck') or contains(tolower(ExteriorFeatures),'patio'))`);
+    if (hasDeckPatio === "true") {
+      filters.push(
+        `(contains(tolower(ExteriorFeatures),'deck') or contains(tolower(ExteriorFeatures),'patio'))`
+      );
     }
-    if (hasWalkInCloset === 'true') {
+    if (hasWalkInCloset === "true") {
       filters.push(`contains(tolower(InteriorFeatures),'walk-in closet')`);
     }
-    if (hasMasterSuite === 'true') {
-      filters.push(`(contains(tolower(InteriorFeatures),'master suite') or contains(tolower(InteriorFeatures),'primary suite'))`);
+    if (hasMasterSuite === "true") {
+      filters.push(
+        `(contains(tolower(InteriorFeatures),'master suite') or contains(tolower(InteriorFeatures),'primary suite'))`
+      );
     }
 
     // Status filter
-    if (status && status !== 'Any Status') {
+    if (status && status !== "Any Status") {
       filters.push(`StandardStatus eq '${status}'`);
     } else {
       // Default to active listings if no status specified
@@ -1773,38 +2017,41 @@ app.get("/api/advanced-search", async (req, res) => {
     }
 
     // Build sorting
-    let orderBy = '';
+    let orderBy = "";
     switch (sortBy) {
-      case 'price_low':
-        orderBy = '$orderby=ListPrice asc';
+      case "price_low":
+        orderBy = "$orderby=ListPrice asc";
         break;
-      case 'price_high':
-        orderBy = '$orderby=ListPrice desc';
+      case "price_high":
+        orderBy = "$orderby=ListPrice desc";
         break;
-      case 'sqft_low':
-        orderBy = '$orderby=LivingArea asc';
+      case "sqft_low":
+        orderBy = "$orderby=LivingArea asc";
         break;
-      case 'sqft_high':
-        orderBy = '$orderby=LivingArea desc';
+      case "sqft_high":
+        orderBy = "$orderby=LivingArea desc";
         break;
-      case 'dom_low':
-        orderBy = '$orderby=DaysOnMarket asc';
+      case "dom_low":
+        orderBy = "$orderby=DaysOnMarket asc";
         break;
-      case 'dom_high':
-        orderBy = '$orderby=DaysOnMarket desc';
+      case "dom_high":
+        orderBy = "$orderby=DaysOnMarket desc";
         break;
-      case 'newest':
+      case "newest":
       default:
-        orderBy = '$orderby=OnMarketDate desc';
+        orderBy = "$orderby=OnMarketDate desc";
         break;
     }
 
     // Construct final URL
-    const filterString = filters.length > 0 ? `$filter=${filters.join(' and ')}` : '';
+    const filterString =
+      filters.length > 0 ? `$filter=${filters.join(" and ")}` : "";
     const topSkip = `$top=${limit}&$skip=${offset}`;
-    
-    const queryParts = [filterString, orderBy, topSkip].filter(part => part);
-    const searchUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Property?${queryParts.join('&')}`;
+
+    const queryParts = [filterString, orderBy, topSkip].filter((part) => part);
+    const searchUrl = `${paragonApiConfig.apiUrl}/${
+      paragonApiConfig.datasetId
+    }/Property?${queryParts.join("&")}`;
 
     console.log("Advanced search URL:", searchUrl);
 
@@ -1827,87 +2074,118 @@ app.get("/api/advanced-search", async (req, res) => {
     console.log(`Advanced search found ${properties.length} properties`);
 
     // Format results using the same comprehensive mapping
-    const formattedProperties = properties.map(record => ({
+    const formattedProperties = properties.map((record) => ({
       id: record.ListingKey || record.PropertyId || record.id,
-      address: record.UnparsedAddress || record.Address || `${record.StreetNumber} ${record.StreetName}`,
+      address:
+        record.UnparsedAddress ||
+        record.Address ||
+        `${record.StreetNumber} ${record.StreetName}`,
       city: record.City,
       state: record.StateOrProvince,
       zipCode: record.PostalCode,
       status: record.StandardStatus,
-      
+
       // Pricing
       listPrice: Number(record.ListPrice || 0),
       originalListPrice: Number(record.OriginalListPrice || 0),
       soldPrice: Number(record.ClosePrice || 0),
-      pricePerSqft: record.ListPrice && record.LivingArea && record.LivingArea > 0
-        ? Math.round(record.ListPrice / record.LivingArea) : 0,
-      
+      pricePerSqft:
+        record.ListPrice && record.LivingArea && record.LivingArea > 0
+          ? Math.round(record.ListPrice / record.LivingArea)
+          : 0,
+
       // Physical characteristics
       sqft: Number(record.LivingArea || record.AboveGradeFinishedArea || 0),
       beds: Number(record.BedroomsTotal || 0),
       baths: Number(record.BathroomsTotalDecimal || record.BathroomsTotal || 0),
       bathsFull: Number(record.BathroomsFull || 0),
       bathsHalf: Number(record.BathroomsHalf || 0),
-      garage: Number(record.GarageSpaces || record.ParkingTotal || record.CoveredSpaces || 0),
+      garage: Number(
+        record.GarageSpaces || record.ParkingTotal || record.CoveredSpaces || 0
+      ),
       yearBuilt: Number(record.YearBuilt || 0),
       stories: Number(record.StoriesTotal || 0),
-      
+
       // Property details
-      propertyType: record.PropertyType || '',
-      propertySubType: record.PropertySubType || '',
+      propertyType: record.PropertyType || "",
+      propertySubType: record.PropertySubType || "",
       lotSizeAcres: Number(record.LotSizeAcres || 0),
       lotSizeSquareFeet: Number(record.LotSizeSquareFeet || 0),
-      
+
       // Features
       fireplace: Number(record.FireplacesTotal || 0),
       pool: record.PoolPrivateYN || false,
-      basement: record.Basement || '',
-      heating: record.Heating || '',
-      cooling: record.Cooling || '',
-      appliances: record.Appliances || '',
-      flooring: record.Flooring || '',
+      basement: record.Basement || "",
+      heating: record.Heating || "",
+      cooling: record.Cooling || "",
+      appliances: record.Appliances || "",
+      flooring: record.Flooring || "",
       newConstruction: record.NewConstructionYN || false,
-      
+
       // Feature flags for UI
       features: {
         hasPool: record.PoolPrivateYN || false,
         hasFireplace: (record.FireplacesTotal || 0) > 0,
-        hasGarage: (record.GarageSpaces || record.ParkingTotal || record.CoveredSpaces || 0) > 0,
-        hasBasement: !!(record.Basement && typeof record.Basement === 'string' && record.Basement.trim()),
-        hasUpdatedKitchen: record.InteriorFeatures ? 
-          /updated kitchen|remodeled kitchen|renovated kitchen/i.test(record.InteriorFeatures) : false,
-        hasHardwoodFloors: record.Flooring ? /hardwood|wood floor/i.test(record.Flooring) : false,
-        hasDeckPatio: record.ExteriorFeatures ? /deck|patio/i.test(record.ExteriorFeatures) : false,
-        hasWalkInCloset: record.InteriorFeatures ? /walk-in closet/i.test(record.InteriorFeatures) : false,
-        hasMasterSuite: record.InteriorFeatures ? /master suite|primary suite/i.test(record.InteriorFeatures) : false,
+        hasGarage:
+          (record.GarageSpaces ||
+            record.ParkingTotal ||
+            record.CoveredSpaces ||
+            0) > 0,
+        hasBasement: !!(
+          record.Basement &&
+          typeof record.Basement === "string" &&
+          record.Basement.trim()
+        ),
+        hasUpdatedKitchen: record.InteriorFeatures
+          ? /updated kitchen|remodeled kitchen|renovated kitchen/i.test(
+              record.InteriorFeatures
+            )
+          : false,
+        hasHardwoodFloors: record.Flooring
+          ? /hardwood|wood floor/i.test(record.Flooring)
+          : false,
+        hasDeckPatio: record.ExteriorFeatures
+          ? /deck|patio/i.test(record.ExteriorFeatures)
+          : false,
+        hasWalkInCloset: record.InteriorFeatures
+          ? /walk-in closet/i.test(record.InteriorFeatures)
+          : false,
+        hasMasterSuite: record.InteriorFeatures
+          ? /master suite|primary suite/i.test(record.InteriorFeatures)
+          : false,
         isNewConstruction: record.NewConstructionYN || false,
       },
-      
+
       // Listing info
-      daysOnMarket: Number(record.DaysOnMarket || record.CumulativeDaysOnMarket || 0),
-      onMarketDate: record.OnMarketDate || '',
-      mlsNumber: record.ListingId || '',
-      
+      daysOnMarket: Number(
+        record.DaysOnMarket || record.CumulativeDaysOnMarket || 0
+      ),
+      onMarketDate: record.OnMarketDate || "",
+      mlsNumber: record.ListingId || "",
+
       // Media
-      imageUrl: record.Media && record.Media.length > 0 ? record.Media[0].MediaURL :
-                record.Photos && record.Photos.length > 0 ? record.Photos[0].url :
-                `https://placehold.co/600x400/d1d5db/374151?text=No+Image`,
-      images: record.Media ? record.Media.map(m => m.MediaURL) : [],
-      
+      imageUrl:
+        record.Media && record.Media.length > 0
+          ? record.Media[0].MediaURL
+          : record.Photos && record.Photos.length > 0
+          ? record.Photos[0].url
+          : `https://placehold.co/600x400/d1d5db/374151?text=No+Image`,
+      images: record.Media ? record.Media.map((m) => m.MediaURL) : [],
+
       // Location
       latitude: Number(record.Latitude || 0),
       longitude: Number(record.Longitude || 0),
-      
+
       // Additional info
-      publicRemarks: record.PublicRemarks || '',
-      buildingFeatures: record.BuildingFeatures || '',
-      exteriorFeatures: record.ExteriorFeatures || '',
-      interiorFeatures: record.InteriorFeatures || '',
-      
+      publicRemarks: record.PublicRemarks || "",
+      buildingFeatures: record.BuildingFeatures || "",
+      exteriorFeatures: record.ExteriorFeatures || "",
+      interiorFeatures: record.InteriorFeatures || "",
+
       // Schools
-      schoolElementary: record.ElementarySchool || '',
-      schoolMiddle: record.MiddleOrJuniorSchool || '',
-      schoolHigh: record.HighSchool || '',
+      schoolElementary: record.ElementarySchool || "",
+      schoolMiddle: record.MiddleOrJuniorSchool || "",
+      schoolHigh: record.HighSchool || "",
     }));
 
     res.json({
@@ -1915,13 +2193,12 @@ app.get("/api/advanced-search", async (req, res) => {
       totalResults: formattedProperties.length,
       searchCriteria: {
         filters: filters,
-        sorting: sortBy || 'newest',
+        sorting: sortBy || "newest",
         limit: Number(limit),
         offset: Number(offset),
       },
       query: req.query,
     });
-
   } catch (error) {
     console.error("Advanced search error:", error);
     res.status(500).json({
@@ -1967,6 +2244,275 @@ app.post("/api/generate-text", async (req, res) => {
   }
 });
 
+// --- NEW ENDPOINT: Future Properties ---
+app.get("/api/future-properties", async (req, res) => {
+  try {
+    const {
+      city = "omaha",
+      min_price = "700000", // Higher minimum price for future properties
+      max_price,
+      property_type = "Residential",
+      min_sqft,
+      max_sqft,
+      beds,
+      baths,
+      limit = "50",
+      sort_by = "price",
+    } = req.query;
+
+    console.log(`[FUTURE PROPERTIES] Query parameters:`, req.query);
+
+    // Build filters for future properties
+    const baseFilters = [];
+
+    // City filter
+    if (city) {
+      baseFilters.push(`tolower(City) eq '${city.toLowerCase()}'`);
+    }
+
+    // Price filters - focusing on higher-end properties
+    if (min_price) {
+      baseFilters.push(`ListPrice ge ${min_price}`);
+    }
+    if (max_price) {
+      baseFilters.push(`ListPrice le ${max_price}`);
+    }
+
+    // Property type filter
+    if (property_type && property_type !== "All") {
+      baseFilters.push(`PropertyType eq '${property_type}'`);
+    }
+
+    // Square footage filters
+    if (min_sqft) {
+      baseFilters.push(`LivingArea ge ${min_sqft}`);
+    }
+    if (max_sqft) {
+      baseFilters.push(`LivingArea le ${max_sqft}`);
+    }
+
+    // Bedroom filter
+    if (beds) {
+      baseFilters.push(`BedroomsTotal ge ${beds}`);
+    }
+
+    // Bathroom filter
+    if (baths) {
+      baseFilters.push(`BathroomsTotalInteger ge ${baths}`);
+    }
+
+    // Zip code filter
+    if (req.query.zip_code) {
+      baseFilters.push(`PostalCode eq '${req.query.zip_code}'`);
+    }
+
+    // Future property conditions - targeting new construction, under construction, or pre-construction
+    const futureConditions = [
+      `PropertyCondition eq 'Under Construction'`,
+      `PropertyCondition eq 'New Construction'`,
+      `PropertyCondition eq 'Pre-Construction'`,
+      `NewConstructionYN eq true`,
+      `PropertyCondition eq 'To Be Built'`,
+    ];
+
+    // Add future property filter (at least one condition must match)
+    baseFilters.push(`(${futureConditions.join(" or ")})`);
+
+    // Only active listings for future properties
+    baseFilters.push(`StandardStatus eq 'Active'`);
+
+    // Build the query
+    const filterString = baseFilters.join(" and ");
+
+    // Set up sorting
+    let orderBy = "ListPrice asc";
+    if (sort_by === "price_desc") {
+      orderBy = "ListPrice desc";
+    } else if (sort_by === "sqft") {
+      orderBy = "LivingArea desc";
+    } else if (sort_by === "beds") {
+      orderBy = "BedroomsTotal desc";
+    } else if (sort_by === "newest") {
+      orderBy = "OnMarketDate desc";
+    }
+
+    // Select fields
+    const selectFields = [
+      "UnparsedAddress",
+      "City",
+      "ListPrice",
+      "LivingArea",
+      "AboveGradeFinishedArea",
+      "BelowGradeFinishedArea",
+      "BedroomsTotal",
+      "BathroomsTotalInteger",
+      "GarageSpaces",
+      "YearBuilt",
+      "StandardStatus",
+      "OnMarketDate",
+      "Media",
+      "ListingKey",
+      "PropertyType",
+      "PropertyCondition",
+      "ArchitecturalStyle",
+      "SubdivisionName",
+      "Coordinates",
+      "Latitude",
+      "Longitude",
+      "NewConstructionYN",
+      "PostalCode",
+      "StateOrProvince",
+    ].join(",");
+
+    // Build API URL
+    const apiUrl = `${paragonApiConfig.apiUrl}/${
+      paragonApiConfig.datasetId
+    }/Properties?access_token=${
+      paragonApiConfig.serverToken
+    }&$filter=${encodeURIComponent(
+      filterString
+    )}&$select=${selectFields}&$orderby=${orderBy}&$top=${limit}`;
+
+    console.log(`[FUTURE PROPERTIES] API URL: ${apiUrl}`);
+
+    // Make API request
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+      console.error(
+        `[FUTURE PROPERTIES] API Error: ${response.status} ${response.statusText}`
+      );
+      return res.status(response.status).json({
+        success: false,
+        message: `Paragon API error: ${response.status} ${response.statusText}`,
+        query: req.query,
+      });
+    }
+
+    const data = await response.json();
+    const properties = data.value || [];
+
+    console.log(
+      `[FUTURE PROPERTIES] Found ${properties.length} future properties`
+    );
+
+    // Transform properties
+    const transformedProperties = properties.map((property) => {
+      const media =
+        Array.isArray(property.Media) && property.Media.length > 0
+          ? property.Media[0]
+          : null;
+
+      const imageUrl =
+        media && media.MediaURL
+          ? media.MediaURL
+          : "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzllYTNhOCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPk5vIFBob3RvPC90ZXh0Pjwvc3ZnPg==";
+
+      return {
+        id: property.ListingKey,
+        address: property.UnparsedAddress || "",
+        city: property.City || "",
+        listPrice: property.ListPrice || 0,
+        sqft: property.LivingArea || 0,
+        basementSqft: property.BelowGradeFinishedArea || 0,
+        totalSqft:
+          (property.LivingArea || 0) + (property.BelowGradeFinishedArea || 0),
+        beds: property.BedroomsTotal || 0,
+        baths: property.BathroomsTotalInteger || 0,
+        garage: property.GarageSpaces || 0,
+        yearBuilt: property.YearBuilt || null,
+        status: property.StandardStatus || "",
+        onMarketDate: property.OnMarketDate || null,
+        pricePerSqft:
+          property.LivingArea > 0
+            ? Math.round(property.ListPrice / property.LivingArea)
+            : 0,
+        propertyType: property.PropertyType || "",
+        condition: property.PropertyCondition || "",
+        style: property.ArchitecturalStyle || "",
+        subdivision: property.SubdivisionName || "",
+        latitude: property.Latitude || null,
+        longitude: property.Longitude || null,
+        newConstruction: property.NewConstructionYN || false,
+        imageUrl: imageUrl,
+        isFuture: true,
+        futureIndicators: {
+          isUnderConstruction: (property.PropertyCondition || "").includes(
+            "Under Construction"
+          ),
+          isNewConstruction: property.NewConstructionYN === true,
+          isPreConstruction: (property.PropertyCondition || "").includes(
+            "Pre-Construction"
+          ),
+          isToBeBulit: (property.PropertyCondition || "").includes(
+            "To Be Built"
+          ),
+        },
+      };
+    });
+
+    // Calculate price statistics
+    const prices = transformedProperties
+      .map((p) => p.listPrice)
+      .filter((p) => p > 0);
+    const priceStats =
+      prices.length > 0
+        ? {
+            min: Math.min(...prices),
+            max: Math.max(...prices),
+            avg: Math.round(prices.reduce((a, b) => a + b, 0) / prices.length),
+            median: prices.sort((a, b) => a - b)[Math.floor(prices.length / 2)],
+          }
+        : { min: 0, max: 0, avg: 0, median: 0 };
+
+    // Group by condition for analysis
+    const byCondition = transformedProperties.reduce((acc, prop) => {
+      const condition = prop.condition || "Unknown";
+      if (!acc[condition]) acc[condition] = [];
+      acc[condition].push(prop);
+      return acc;
+    }, {});
+
+    res.json({
+      success: true,
+      query: req.query,
+      count: transformedProperties.length,
+      priceStats,
+      byCondition: Object.keys(byCondition).map((condition) => ({
+        condition,
+        count: byCondition[condition].length,
+        avgPrice: Math.round(
+          byCondition[condition].reduce((sum, p) => sum + p.listPrice, 0) /
+            byCondition[condition].length
+        ),
+      })),
+      properties: transformedProperties,
+      meta: {
+        apiUrl: apiUrl.substring(0, 200) + "...", // Truncated for readability
+        searchCriteria: {
+          city,
+          min_price,
+          max_price,
+          property_type,
+          min_sqft,
+          max_sqft,
+          beds,
+          baths,
+          limit,
+          sort_by,
+          focus: "Future/Upcoming Properties with Higher Prices",
+        },
+      },
+    });
+  } catch (error) {
+    console.error("[FUTURE PROPERTIES] Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+});
+
 // Haversine formula to calculate distance between two coordinates in miles
 function haversineMiles(lat1, lon1, lat2, lon2) {
   const toRad = (v) => (v * Math.PI) / 180;
@@ -1982,6 +2528,910 @@ function haversineMiles(lat1, lon1, lat2, lon2) {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
+
+// Agent suggestions endpoint for autocomplete
+app.get("/api/agents/suggestions", async (req, res) => {
+  const { q, type = "listing", limit = 20 } = req.query;
+
+  try {
+    if (!q || q.length < 2) {
+      return res.json({
+        success: true,
+        suggestions: [],
+        message: "Query must be at least 2 characters",
+      });
+    }
+
+    // Determine which agent field to search
+    const agentField =
+      type === "buyer" ? "BuyerAgentFullName" : "ListAgentFullName";
+    const agentMlsField =
+      type === "buyer" ? "BuyerAgentMlsId" : "ListAgentMlsId";
+    const agentPhoneField =
+      type === "buyer" ? "BuyerAgentPreferredPhone" : "ListAgentPreferredPhone";
+
+    // Build query to get distinct agents matching the search term
+    const baseUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties`;
+    const accessToken = `access_token=${paragonApiConfig.serverToken}`;
+
+    const filter = `contains(tolower(${agentField}),'${q.toLowerCase()}')`;
+    const select = `${agentField},${agentMlsField},${agentPhoneField}`;
+
+    const apiUrl = `${baseUrl}?${accessToken}&$filter=${encodeURIComponent(
+      filter
+    )}&$select=${encodeURIComponent(select)}&$top=${limit * 3}`;
+
+    console.log(
+      `Agent suggestions query for "${q}":`,
+      apiUrl.replace(paragonApiConfig.serverToken, "***")
+    );
+
+    const response = await fetch(apiUrl);
+
+    if (!response.ok) {
+      throw new Error(
+        `Paragon API error: ${response.status} ${response.statusText}`
+      );
+    }
+
+    const data = await response.json();
+    const properties = data.value || [];
+
+    // Extract unique agents
+    const agentMap = new Map();
+
+    properties.forEach((property) => {
+      const name = property[agentField];
+      const mlsId = property[agentMlsField];
+      const phone = property[agentPhoneField];
+
+      if (name && name.trim()) {
+        const key = `${name.trim().toLowerCase()}_${mlsId || ""}`;
+        if (!agentMap.has(key)) {
+          agentMap.set(key, {
+            name: name.trim(),
+            mlsId: mlsId || "",
+            phone: phone || "",
+            type: type,
+          });
+        }
+      }
+    });
+
+    // Convert to array and limit results
+    const suggestions = Array.from(agentMap.values())
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, limit);
+
+    res.json({
+      success: true,
+      count: suggestions.length,
+      suggestions,
+      query: q,
+      type,
+    });
+  } catch (error) {
+    console.error("Error fetching agent suggestions:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      query: q,
+      type,
+    });
+  }
+});
+
+// Team properties endpoint - get properties for multiple team members
+app.get("/api/team-properties", async (req, res) => {
+  const {
+    agent_ids, // Comma-separated list of agent MLS IDs: "969503,480248,960735"
+    agent_names, // Alternative: comma-separated agent names
+    city,
+    status = "Active", // Default to active listings
+    limit = 50,
+    sort_by = "agent_priority", // agent_priority, price, date, sqft
+  } = req.query;
+
+  try {
+    if (!agent_ids && !agent_names) {
+      return res.status(400).json({
+        success: false,
+        error: "Either agent_ids or agent_names parameter is required",
+        example:
+          "?agent_ids=969503,480248 or ?agent_names=Mike Bjork,John Smith",
+      });
+    }
+
+    console.log("[TEAM PROPERTIES] Request:", req.query);
+
+    // Build base filters
+    const baseFilters = [];
+
+    // Agent filters - support both MLS IDs and names
+    const agentFilters = [];
+
+    if (agent_ids) {
+      const idList = agent_ids
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
+      const idFilter = idList
+        .map((id) => `ListAgentMlsId eq '${id}'`)
+        .join(" or ");
+      if (idFilter) {
+        agentFilters.push(`(${idFilter})`);
+      }
+    }
+
+    if (agent_names) {
+      const nameList = agent_names
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean);
+      const nameFilter = nameList
+        .map(
+          (name) =>
+            `contains(tolower(ListAgentFullName),'${name.toLowerCase()}')`
+        )
+        .join(" or ");
+      if (nameFilter) {
+        agentFilters.push(`(${nameFilter})`);
+      }
+    }
+
+    // Combine agent filters with OR
+    if (agentFilters.length > 0) {
+      baseFilters.push(`(${agentFilters.join(" or ")})`);
+    }
+
+    // Location filter
+    if (city) {
+      baseFilters.push(`tolower(City) eq '${city.toLowerCase()}'`);
+    }
+
+    // Status filter
+    if (status === "Active") {
+      baseFilters.push(`StandardStatus eq 'Active'`);
+    } else if (status === "Sold") {
+      baseFilters.push(`StandardStatus eq 'Closed'`);
+      // Add recent sales filter (last 12 months)
+      const cutoffDate = new Date();
+      cutoffDate.setMonth(cutoffDate.getMonth() - 12);
+      const dateFilter = cutoffDate.toISOString().split("T")[0];
+      baseFilters.push(`CloseDate ge ${dateFilter}`);
+    }
+
+    const filterString = baseFilters.join(" and ");
+
+    // Set up sorting
+    let orderBy = "ListPrice desc"; // Default sorting
+    if (sort_by === "price") {
+      orderBy = "ListPrice desc";
+    } else if (sort_by === "date") {
+      orderBy = status === "Sold" ? "CloseDate desc" : "OnMarketDate desc";
+    } else if (sort_by === "sqft") {
+      orderBy = "LivingArea desc";
+    }
+    // For agent_priority, we'll sort in JavaScript after getting results
+
+    // Select comprehensive fields
+    const selectFields = [
+      "UnparsedAddress",
+      "City",
+      "StateOrProvince",
+      "PostalCode",
+      "ListPrice",
+      "ClosePrice",
+      "LivingArea",
+      "AboveGradeFinishedArea",
+      "BelowGradeFinishedArea",
+      "BedroomsTotal",
+      "BathroomsTotalInteger",
+      "GarageSpaces",
+      "YearBuilt",
+      "StandardStatus",
+      "CloseDate",
+      "OnMarketDate",
+      "Media",
+      "ListingKey",
+      "ListingId",
+      "PropertyType",
+      "PropertyCondition",
+      "ArchitecturalStyle",
+      "SubdivisionName",
+      "Latitude",
+      "Longitude",
+      "LotSizeAcres",
+      "ListAgentFullName",
+      "ListAgentMlsId",
+      "ListAgentPreferredPhone",
+      "PublicRemarks",
+    ].join(",");
+
+    // Build API URL
+    const apiUrl =
+      `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?` +
+      `access_token=${paragonApiConfig.serverToken}&` +
+      `$filter=${encodeURIComponent(filterString)}&` +
+      `$select=${selectFields}&` +
+      `$orderby=${orderBy}&` +
+      `$top=${limit}`;
+
+    console.log(
+      "[TEAM PROPERTIES] API URL:",
+      apiUrl.replace(paragonApiConfig.serverToken, "***")
+    );
+
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+      throw new Error(
+        `Paragon API error: ${response.status} ${response.statusText}`
+      );
+    }
+
+    const data = await response.json();
+    const properties = data.value || [];
+
+    console.log(`[TEAM PROPERTIES] Found ${properties.length} team properties`);
+
+    // Transform properties and add team info
+    const teamProperties = properties.map((property) => {
+      const sqftValue =
+        property.LivingArea || property.AboveGradeFinishedArea || 0;
+      const totalSqft = sqftValue + (property.BelowGradeFinishedArea || 0);
+      const price =
+        status === "Sold" ? property.ClosePrice : property.ListPrice;
+      const pricePerSqft =
+        price && sqftValue > 0 ? Math.round(price / sqftValue) : 0;
+
+      // Get primary image
+      const primaryImage =
+        property.Media && property.Media.length > 0
+          ? property.Media[0].MediaURL || property.Media[0].PreferredPhotoURL
+          : null;
+
+      // Determine if this agent was specifically requested (for priority sorting)
+      const requestedAgentIds = agent_ids
+        ? agent_ids.split(",").map((id) => id.trim())
+        : [];
+      const requestedAgentNames = agent_names
+        ? agent_names.split(",").map((name) => name.trim().toLowerCase())
+        : [];
+
+      const isRequestedAgent =
+        requestedAgentIds.includes(property.ListAgentMlsId) ||
+        requestedAgentNames.some((name) =>
+          (property.ListAgentFullName || "").toLowerCase().includes(name)
+        );
+
+      return {
+        id: property.ListingKey,
+        mlsNumber: property.ListingId,
+        address: property.UnparsedAddress || "",
+        city: property.City || "",
+        state: property.StateOrProvince || "",
+        zipCode: property.PostalCode || "",
+        listPrice: property.ListPrice || 0,
+        soldPrice: property.ClosePrice || 0,
+        sqft: sqftValue,
+        basementSqft: property.BelowGradeFinishedArea || 0,
+        totalSqft,
+        beds: property.BedroomsTotal || 0,
+        baths: property.BathroomsTotalInteger || 0,
+        garage: property.GarageSpaces || 0,
+        yearBuilt: property.YearBuilt || null,
+        status: property.StandardStatus || "",
+        closeDate: property.CloseDate || null,
+        onMarketDate: property.OnMarketDate || null,
+        pricePerSqft,
+        propertyType: property.PropertyType || "",
+        condition: property.PropertyCondition || "",
+        style: property.ArchitecturalStyle || "",
+        subdivision: property.SubdivisionName || "",
+        latitude: property.Latitude || null,
+        longitude: property.Longitude || null,
+        lotSizeAcres: property.LotSizeAcres || 0,
+        description: property.PublicRemarks || "",
+        imageUrl: primaryImage,
+        images: property.Media
+          ? property.Media.map((m) => m.MediaURL || m.PreferredPhotoURL).filter(
+              Boolean
+            )
+          : [],
+
+        // Team/Agent info
+        listAgent: {
+          name: property.ListAgentFullName || "",
+          mlsId: property.ListAgentMlsId || "",
+          phone: property.ListAgentPreferredPhone || "",
+        },
+
+        // Team priority for sorting
+        isTeamMember: isRequestedAgent,
+        teamPriority: isRequestedAgent ? 1 : 2,
+      };
+    });
+
+    // Apply custom sorting
+    if (sort_by === "agent_priority") {
+      // Sort by team priority first, then by price within each group
+      teamProperties.sort((a, b) => {
+        if (a.teamPriority !== b.teamPriority) {
+          return a.teamPriority - b.teamPriority; // Team members first
+        }
+        return (b.listPrice || b.soldPrice) - (a.listPrice || a.soldPrice); // Then by price desc
+      });
+    }
+
+    // Group properties by agent for summary
+    const agentSummary = {};
+    teamProperties.forEach((prop) => {
+      const agentName = prop.listAgent.name;
+      if (!agentSummary[agentName]) {
+        agentSummary[agentName] = {
+          name: agentName,
+          mlsId: prop.listAgent.mlsId,
+          phone: prop.listAgent.phone,
+          listingCount: 0,
+          isTeamMember: prop.isTeamMember,
+        };
+      }
+      agentSummary[agentName].listingCount++;
+    });
+
+    res.json({
+      success: true,
+      count: teamProperties.length,
+      totalAvailable: data["@odata.count"] || teamProperties.length,
+      properties: teamProperties,
+      agentSummary: Object.values(agentSummary),
+      searchCriteria: {
+        agent_ids,
+        agent_names,
+        city,
+        status,
+        sort_by,
+      },
+      meta: {
+        teamMembersFirst: sort_by === "agent_priority",
+        requestedAgents: {
+          ids: agent_ids ? agent_ids.split(",") : [],
+          names: agent_names ? agent_names.split(",") : [],
+        },
+      },
+    });
+  } catch (error) {
+    console.error("[TEAM PROPERTIES] Error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      searchCriteria: req.query,
+    });
+  }
+});
+
+// --- TEAM MANAGEMENT APIs ---
+
+// Get all teams
+app.get("/api/teams", (req, res) => {
+  try {
+    const allTeams = Array.from(teams.values()).map((team) => ({
+      id: team.id,
+      name: team.name,
+      description: team.description,
+      memberCount: team.members.length,
+      created_at: team.created_at,
+      members: team.members, // Include members for easier frontend use
+    }));
+
+    res.json({
+      success: true,
+      count: allTeams.length,
+      teams: allTeams,
+    });
+  } catch (error) {
+    console.error("[TEAMS] Error getting teams:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Create new team
+app.post("/api/teams", (req, res) => {
+  try {
+    const { name, description = "" } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: "Team name is required",
+      });
+    }
+
+    const newTeam = {
+      id: teamIdCounter++,
+      name: name.trim(),
+      description: description.trim(),
+      members: [],
+      created_at: new Date().toISOString(),
+    };
+
+    teams.set(newTeam.id, newTeam);
+
+    console.log(`[TEAMS] Created team: ${newTeam.name} (ID: ${newTeam.id})`);
+
+    res.status(201).json({
+      success: true,
+      team: newTeam,
+      message: "Team created successfully",
+    });
+  } catch (error) {
+    console.error("[TEAMS] Error creating team:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Get specific team
+app.get("/api/teams/:teamId", (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      team: team,
+    });
+  } catch (error) {
+    console.error("[TEAMS] Error getting team:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Update team
+app.put("/api/teams/:teamId", (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    const { name, description } = req.body;
+
+    if (name && name.trim()) {
+      team.name = name.trim();
+    }
+    if (description !== undefined) {
+      team.description = description.trim();
+    }
+
+    team.updated_at = new Date().toISOString();
+    teams.set(teamId, team);
+
+    console.log(`[TEAMS] Updated team: ${team.name} (ID: ${teamId})`);
+
+    res.json({
+      success: true,
+      team: team,
+      message: "Team updated successfully",
+    });
+  } catch (error) {
+    console.error("[TEAMS] Error updating team:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Delete team
+app.delete("/api/teams/:teamId", (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    teams.delete(teamId);
+
+    console.log(`[TEAMS] Deleted team: ${team.name} (ID: ${teamId})`);
+
+    res.json({
+      success: true,
+      message: "Team deleted successfully",
+      deletedTeam: { id: teamId, name: team.name },
+    });
+  } catch (error) {
+    console.error("[TEAMS] Error deleting team:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// --- TEAM MEMBERS APIs ---
+
+// Get team members
+app.get("/api/teams/:teamId/members", (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      teamId: teamId,
+      teamName: team.name,
+      count: team.members.length,
+      members: team.members,
+    });
+  } catch (error) {
+    console.error("[TEAM MEMBERS] Error getting members:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Add member to team
+app.post("/api/teams/:teamId/members", (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    const { agent_name, agent_mls_id, agent_phone = "" } = req.body;
+
+    if (!agent_name || !agent_mls_id) {
+      return res.status(400).json({
+        success: false,
+        error: "agent_name and agent_mls_id are required",
+      });
+    }
+
+    // Check if agent already in team
+    const existingMember = team.members.find(
+      (m) => m.agent_mls_id === agent_mls_id
+    );
+    if (existingMember) {
+      return res.status(400).json({
+        success: false,
+        error: "Agent already in team",
+        existingMember: existingMember,
+      });
+    }
+
+    const newMember = {
+      id: team.members.length + 1,
+      agent_name: agent_name.trim(),
+      agent_mls_id: agent_mls_id.trim(),
+      agent_phone: agent_phone.trim(),
+      added_at: new Date().toISOString(),
+    };
+
+    team.members.push(newMember);
+    teams.set(teamId, team);
+
+    console.log(`[TEAM MEMBERS] Added ${agent_name} to team ${team.name}`);
+
+    res.status(201).json({
+      success: true,
+      member: newMember,
+      team: {
+        id: team.id,
+        name: team.name,
+        memberCount: team.members.length,
+      },
+      message: "Member added to team successfully",
+    });
+  } catch (error) {
+    console.error("[TEAM MEMBERS] Error adding member:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Remove member from team
+app.delete("/api/teams/:teamId/members/:memberId", (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const memberId = parseInt(req.params.memberId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    const memberIndex = team.members.findIndex((m) => m.id === memberId);
+    if (memberIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        error: "Member not found in team",
+      });
+    }
+
+    const removedMember = team.members.splice(memberIndex, 1)[0];
+    teams.set(teamId, team);
+
+    console.log(
+      `[TEAM MEMBERS] Removed ${removedMember.agent_name} from team ${team.name}`
+    );
+
+    res.json({
+      success: true,
+      message: "Member removed from team successfully",
+      removedMember: removedMember,
+      team: {
+        id: team.id,
+        name: team.name,
+        memberCount: team.members.length,
+      },
+    });
+  } catch (error) {
+    console.error("[TEAM MEMBERS] Error removing member:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// --- FEATURED LISTINGS API ---
+
+// Get featured listings for a team (team properties first, then others)
+app.get("/api/teams/:teamId/featured-listings", async (req, res) => {
+  try {
+    const teamId = parseInt(req.params.teamId);
+    const team = teams.get(teamId);
+
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        error: "Team not found",
+      });
+    }
+
+    if (team.members.length === 0) {
+      return res.json({
+        success: true,
+        teamId: teamId,
+        teamName: team.name,
+        count: 0,
+        teamProperties: [],
+        otherProperties: [],
+        message: "No team members found",
+      });
+    }
+
+    const {
+      city,
+      status = "Active",
+      limit = 50,
+      include_others = "true",
+    } = req.query;
+
+    // Get team member IDs
+    const teamAgentIds = team.members.map((m) => m.agent_mls_id).join(",");
+
+    console.log(
+      `[FEATURED LISTINGS] Getting listings for team ${team.name}, agents: ${teamAgentIds}`
+    );
+
+    // Build API call for team properties (reusing existing team-properties logic)
+    const baseFilters = [];
+
+    // Agent filter for team members
+    const idList = teamAgentIds
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+    const agentFilter = idList
+      .map((id) => `ListAgentMlsId eq '${id}'`)
+      .join(" or ");
+    baseFilters.push(`(${agentFilter})`);
+
+    // Location filter
+    if (city) {
+      baseFilters.push(`tolower(City) eq '${city.toLowerCase()}'`);
+    }
+
+    // Status filter
+    if (status === "Active") {
+      baseFilters.push(`StandardStatus eq 'Active'`);
+    } else if (status === "Sold") {
+      baseFilters.push(`StandardStatus eq 'Closed'`);
+      const cutoffDate = new Date();
+      cutoffDate.setMonth(cutoffDate.getMonth() - 12);
+      const dateFilter = cutoffDate.toISOString().split("T")[0];
+      baseFilters.push(`CloseDate ge ${dateFilter}`);
+    }
+
+    const filterString = baseFilters.join(" and ");
+
+    // Select fields
+    const selectFields = [
+      "UnparsedAddress",
+      "City",
+      "StateOrProvince",
+      "PostalCode",
+      "ListPrice",
+      "ClosePrice",
+      "LivingArea",
+      "AboveGradeFinishedArea",
+      "BelowGradeFinishedArea",
+      "BedroomsTotal",
+      "BathroomsTotalInteger",
+      "GarageSpaces",
+      "YearBuilt",
+      "StandardStatus",
+      "CloseDate",
+      "OnMarketDate",
+      "Media",
+      "ListingKey",
+      "ListingId",
+      "PropertyType",
+      "PropertyCondition",
+      "ArchitecturalStyle",
+      "SubdivisionName",
+      "Latitude",
+      "Longitude",
+      "LotSizeAcres",
+      "ListAgentFullName",
+      "ListAgentMlsId",
+      "ListAgentPreferredPhone",
+      "PublicRemarks",
+    ].join(",");
+
+    // Build API URL
+    const apiUrl =
+      `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?` +
+      `access_token=${paragonApiConfig.serverToken}&` +
+      `$filter=${encodeURIComponent(filterString)}&` +
+      `$select=${selectFields}&` +
+      `$orderby=ListPrice desc&` +
+      `$top=${limit}`;
+
+    // Make API request
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+      throw new Error(
+        `Paragon API error: ${response.status} ${response.statusText}`
+      );
+    }
+
+    const data = await response.json();
+    const teamProperties = (data.value || []).map((property) => {
+      const sqftValue =
+        property.LivingArea || property.AboveGradeFinishedArea || 0;
+      const totalSqft = sqftValue + (property.BelowGradeFinishedArea || 0);
+      const price =
+        status === "Sold" ? property.ClosePrice : property.ListPrice;
+      const pricePerSqft =
+        price && sqftValue > 0 ? Math.round(price / sqftValue) : 0;
+
+      const primaryImage =
+        property.Media && property.Media.length > 0
+          ? property.Media[0].MediaURL || property.Media[0].PreferredPhotoURL
+          : null;
+
+      return {
+        id: property.ListingKey,
+        mlsNumber: property.ListingId,
+        address: property.UnparsedAddress || "",
+        city: property.City || "",
+        state: property.StateOrProvince || "",
+        zipCode: property.PostalCode || "",
+        listPrice: property.ListPrice || 0,
+        soldPrice: property.ClosePrice || 0,
+        sqft: sqftValue,
+        totalSqft,
+        beds: property.BedroomsTotal || 0,
+        baths: property.BathroomsTotalInteger || 0,
+        garage: property.GarageSpaces || 0,
+        yearBuilt: property.YearBuilt || null,
+        status: property.StandardStatus || "",
+        closeDate: property.CloseDate || null,
+        onMarketDate: property.OnMarketDate || null,
+        pricePerSqft,
+        propertyType: property.PropertyType || "",
+        condition: property.PropertyCondition || "",
+        style: property.ArchitecturalStyle || "",
+        subdivision: property.SubdivisionName || "",
+        latitude: property.Latitude || null,
+        longitude: property.Longitude || null,
+        description: property.PublicRemarks || "",
+        imageUrl: primaryImage,
+        images: property.Media
+          ? property.Media.map((m) => m.MediaURL || m.PreferredPhotoURL).filter(
+              Boolean
+            )
+          : [],
+        listAgent: {
+          name: property.ListAgentFullName || "",
+          mlsId: property.ListAgentMlsId || "",
+          phone: property.ListAgentPreferredPhone || "",
+        },
+        isFeatured: true,
+        isTeamProperty: true,
+      };
+    });
+
+    // TODO: Add "other properties" logic here if include_others=true
+    // For now, just return team properties
+    const otherProperties = [];
+
+    res.json({
+      success: true,
+      teamId: teamId,
+      teamName: team.name,
+      teamMembers: team.members.length,
+      count: teamProperties.length + otherProperties.length,
+      teamPropertiesCount: teamProperties.length,
+      otherPropertiesCount: otherProperties.length,
+      teamProperties: teamProperties,
+      otherProperties: otherProperties,
+      searchCriteria: {
+        city,
+        status,
+        limit,
+        include_others,
+      },
+      meta: {
+        teamAgentIds: teamAgentIds,
+        priorityOrder: "Team properties first, then others",
+      },
+    });
+  } catch (error) {
+    console.error("[FEATURED LISTINGS] Error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
 
 // --- 6. Start ---
 app.listen(PORT, () =>

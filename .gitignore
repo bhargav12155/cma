@@ -45,3 +45,16 @@ jspm_packages/
 
 # Mac system files
 Icon?
+
+# Deployment packages and archives
+*.zip
+*.tar.gz
+*.rar
+
+# AWS Elastic Beanstalk deployment files
+.elasticbeanstalk/logs/
+.elasticbeanstalk/app_versions/
+
+# Old deployment folders
+cma-*-deploy*/
+cma-*-fix*/
