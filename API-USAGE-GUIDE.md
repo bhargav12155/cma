@@ -25,7 +25,7 @@ This API requires Bearer Token authentication for property data access. Include 
 
 ```bash
 curl -H "Authorization: Bearer YOUR_TOKEN_HERE" \
-  "http://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&limit=10"
+  "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&limit=10"
 ```
 
 **Note**: The `/api/health` endpoint does not require authentication.
@@ -35,7 +35,7 @@ curl -H "Authorization: Bearer YOUR_TOKEN_HERE" \
 **Production:**
 
 ```
-http://gbcma.us-east-2.elasticbeanstalk.com
+https://gbcma.us-east-2.elasticbeanstalk.com
 ```
 
 **Local Development:**
@@ -58,6 +58,8 @@ http://localhost:3002
       "id": "bee7e16cc5de4d1b58ec1d079f69d8f3",
       "address": "19863 Cottonwood Street",
       "city": "Gretna",
+      "state": "NE",
+      "zipCode": "68028",
       "listPrice": 575000,
       "soldPrice": null,
       "sqft": 1890,
@@ -71,6 +73,9 @@ http://localhost:3002
       "propertyType": "Residential",
       "subdivision": "REMINGTON WEST",
       "style": ["Ranch", "Traditional"],
+      "condition": "Excellent",
+      "description": "Beautiful ranch home featuring granite countertops, hardwood floors, and finished basement. Located in desirable Remington West subdivision with access to community amenities.",
+      "lotSizeSqft": 8712,
       "pricePerSqft": 304,
       "distance_miles": 0,
       "imageUrl": "https://photos.paragonmls.com/...",
@@ -139,8 +144,83 @@ http://localhost:3002
 ### 1. 🏠 Basic Property Search by City
 
 ```bash
-curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&limit=10" \
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&limit=10"
   -H "Content-Type: application/json"
+```
+
+### 2. 📊 Property Comparables Analysis
+
+```bash
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/cma-comparables?city=Gretna&min_sqft=1500&limit=10"
+  -H "Content-Type: application/json"
+```
+
+### 3. 💰 Price Range Search
+
+```bash
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&min_price=200000&max_price=800000&limit=15"
+  -H "Content-Type: application/json"
+```
+
+### 4. 📏 Square Footage Filter
+
+```bash
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&min_sqft=1500&max_sqft=3500&limit=20"
+  -H "Content-Type: application/json"
+```
+
+### 5. 🛏️ Bedrooms & Bathrooms
+
+```bash
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&min_bedrooms=3&max_bedrooms=5&min_bathrooms=2&limit=10"
+  -H "Content-Type: application/json"
+```
+
+### 6. 🏗️ Year Built Range
+
+```bash
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&min_year_built=2000&max_year_built=2020&limit=12"
+  -H "Content-Type: application/json"
+```
+
+### 7. 🚗 Garage Spaces
+
+```bash
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&garage_spaces=3&min_price=300000&limit=8"
+  -H "Content-Type: application/json"
+```
+
+### 8. 🌊 Waterfront Properties
+
+```bash
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&waterfront=true&min_price=500000&limit=5"
+  -H "Content-Type: application/json"
+```
+
+### 9. 🆕 New Construction
+
+```bash
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&new_construction=true&min_year_built=2020&limit=10"
+  -H "Content-Type: application/json"
+```
+
+### 10. 🏘️ Subdivision Search
+
+```bash
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?subdivision=Linden+Estates&min_price=400000&limit=8"
+  -H "Content-Type: application/json"
+```
+
+### 11. 🎯 Advanced CMA Search (Real Example)
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?address=19863+Cottonwood+Street%2C+Gretna+NE+68028&city=Gretna&latitude=41.180872&longitude=-96.228298&min_sqft=690&max_sqft=3090&min_year_built=2013&max_year_built=2025&limit=200&sort_by=ListPrice&sort_order=desc"
+  -H "Accept: */*"
+  -H "Accept-Language: en-US,en;q=0.9,es;q=0.8"
+  -H "Connection: keep-alive"
+  -H "Referer: https://gbcma.us-east-2.elasticbeanstalk.com/"
+  -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+  --insecure
 ```
 
 ### 2. 📊 Property Comparables Analysis
@@ -225,28 +305,28 @@ curl "http://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?address=
 ### 12. 🔍 Buyer Agent by MLS ID
 
 ```bash
-curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?buyer_agent_mls_id=969503&limit=10" \
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?buyer_agent_mls_id=969503&limit=10" \
   -H "Content-Type: application/json"
 ```
 
 ### 13. 🔎 Agent Name Wildcard Search
 
 ```bash
-curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/property-search?agent=mike&limit=15" \
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search?agent=mike&limit=15" \
   -H "Content-Type: application/json"
 ```
 
 ### 14. 📋 Listing Agent Search by Name
 
 ```bash
-curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/property-search?listing_agent_name=Deb&max_price=3000000&limit=10" \
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search?listing_agent_name=Deb&max_price=3000000&limit=10" \
   -H "Content-Type: application/json"
 ```
 
 ### 15. 🏢 Search Properties with Agent Information
 
 ```bash
-curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/property-search?city=Omaha&limit=5" \
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search?city=Omaha&limit=5" \
   -H "Content-Type: application/json" | jq '.properties[] | {address, listPrice, listAgent, listOffice}'
 ```
 
@@ -257,21 +337,21 @@ curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/property-search?cit
 ### 15. 📊 Full CMA Search
 
 ```bash
-curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&min_sqft=1800&max_sqft=2800&min_price=300000&max_price=700000&min_year_built=1990&garage_spaces=2&limit=50" \
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&min_sqft=1800&max_sqft=2800&min_price=300000&max_price=700000&min_year_built=1990&garage_spaces=2&limit=50" \
   -H "Content-Type: application/json"
 ```
 
 ### 16. 🏡 Luxury Property Comp
 
 ```bash
-curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&min_price=1000000&min_sqft=4000&min_bedrooms=4&min_bathrooms=3&garage_spaces=3&limit=25" \
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&min_price=1000000&min_sqft=4000&min_bedrooms=4&min_bathrooms=3&garage_spaces=3&limit=25" \
   -H "Content-Type: application/json"
 ```
 
 ### 17. 🏠 Starter Home Analysis
 
 ```bash
-curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&max_price=350000&min_bedrooms=2&max_bedrooms=3&min_sqft=1000&max_sqft=2000&limit=30" \
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&max_price=350000&min_bedrooms=2&max_bedrooms=3&min_sqft=1000&max_sqft=2000&limit=30" \
   -H "Content-Type: application/json"
 ```
 
@@ -282,29 +362,129 @@ curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?c
 ### 18. 🎯 Investment Property Search
 
 ```bash
-curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?property_type=Residential+Income&min_price=200000&max_price=1000000&limit=15" \
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?property_type=Residential+Income&min_price=200000&max_price=1000000&limit=15" \
   -H "Content-Type: application/json"
 ```
 
 ### 19. 📍 Address-Based Search
 
 ```bash
-curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?address=Linden+Estates&city=Omaha&min_sqft=2500&limit=20" \
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?address=Linden+Estates&city=Omaha&min_sqft=2500&limit=20" \
   -H "Content-Type: application/json"
 ```
 
 ### 20. 🏆 Premium Properties
 
 ```bash
-curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&min_price=800000&min_sqft=3500&min_bedrooms=4&garage_spaces=3&waterfront=true&limit=10" \
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&min_price=800000&min_sqft=3500&min_bedrooms=4&garage_spaces=3&waterfront=true&limit=10" \
   -H "Content-Type: application/json"
 ```
 
 ### 21. 🔄 Comprehensive Market Analysis
 
 ```bash
-curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&min_price=250000&max_price=2000000&min_sqft=1200&max_sqft=6000&min_year_built=1980&sort_by=ListPrice&sort_order=desc&limit=100" \
+curl -X GET "https://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?city=Omaha&min_price=250000&max_price=2000000&min_sqft=1200&max_sqft=6000&min_year_built=1980&sort_by=ListPrice&sort_order=desc&limit=100" \
   -H "Content-Type: application/json"
+```
+
+---
+
+## 📮 ZIP Code Property Search Examples
+
+### 22. 🔍 Basic ZIP Code Search
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search-new?zip_code=68007"
+```
+
+### 23. 📮 ZIP Code with Limit
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search-new?zip_code=68007&limit=20"
+```
+
+### 24. 💰 ZIP Code with Price Range
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search-new?zip_code=68028&min_price=200000&max_price=800000"
+```
+
+### 25. 📏 ZIP Code with Square Footage Filter
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search-new?zip_code=68007&min_sqft=1500&max_sqft=3500"
+```
+
+### 26. 🛏️ ZIP Code with Bedrooms/Bathrooms
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search-new?zip_code=68007&min_beds=3&max_beds=5&min_baths=2"
+```
+
+### 27. 📅 ZIP Code with Sorting (Newest First)
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search-new?zip_code=68007&sort_by=newest&limit=15"
+```
+
+### 28. 💲 ZIP Code with Price Sorting (High to Low)
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search-new?zip_code=68007&sort_by=price&sort_order=desc&limit=10"
+```
+
+### 29. 🎯 ZIP Code Multiple Filters Combined
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search-new?zip_code=68028&min_price=300000&max_price=700000&min_sqft=1800&max_sqft=3000&min_year_built=2000&sort_by=price&sort_order=desc&limit=25"
+```
+
+### 30. 🏠 MLS Number Property Lookup
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search?mls_number=22524913"
+```
+
+### 31. 📋 Alternative MLS Search
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search-new?mls_number=22524913"
+```
+
+### 32. 🔗 Using Listing ID Parameter
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search?listing_id=22524913"
+```
+
+### 33. 🏠 Local Development ZIP Search
+
+```bash
+curl "http://localhost:3002/api/property-search-new?zip_code=68007"
+```
+
+### 34. 📊 ZIP Code with JSON Formatting
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search-new?zip_code=68007" | jq
+```
+
+### 35. 🔢 Property Count by Status
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-count"
+```
+
+### 36. 📋 Test New Fields (ZIP, State, Description)
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search-new?zip_code=68007&limit=5" | jq '.properties[] | {address, city, state, zipCode, baths, description, lotSizeSqft, condition, style}'
+```
+
+### 37. 🔍 Verify New Field Data
+
+```bash
+curl "https://gbcma.us-east-2.elasticbeanstalk.com/api/property-search-new?mls_number=22524913" | jq '.properties[0] | {zipCode, state, description, baths, lotSizeSqft, basementSqft, totalSqft, condition, style}'
 ```
 
 ---
@@ -361,7 +541,38 @@ curl -X GET "http://gbcma.us-east-2.elasticbeanstalk.com/api/properties/search?c
 
 ---
 
-## 🏠 Property Response Fields
+## � Recently Added Fields (v2.2.0)
+
+The following critical fields have been added to address common frontend requirements:
+
+### ✅ Critical Fields Added:
+
+- **`baths`** - Bathroom count (was already implemented but now guaranteed)
+- **`zipCode`** - ZIP code extracted from address or PostalCode field
+- **`state`** - State abbreviation extracted from address or StateOrProvince field
+- **`description`** - Property description from PublicRemarks/PrivateRemarks
+
+### 🔶 Enhanced Fields:
+
+- **`lotSizeSqft`** - Lot size in square feet (converted from acres if needed)
+- **`basementSqft`** - Now guaranteed not null (defaults to 0)
+- **`totalSqft`** - Now guaranteed not 0 if sqft is available
+- **`condition`** - Improved to join multiple conditions
+- **`style`** - Now returns array of all architectural styles
+
+### 🎯 Field Mapping Strategy:
+
+```javascript
+// The API now uses this fallback strategy:
+zipCode: prop.PostalCode || extractedFromAddress,
+state: prop.StateOrProvince || extractedFromAddress,
+description: prop.PublicRemarks || prop.PrivateRemarks || "",
+baths: prop.BathroomsTotalInteger || prop.BathroomsTotal || 0,
+```
+
+---
+
+## �🏠 Property Response Fields
 
 Each property in the API response includes these standardized fields:
 
@@ -372,11 +583,13 @@ Each property in the API response includes these standardized fields:
 | `city`           | string  | City name                   | `Gretna`                      |
 | `state`          | string  | State abbreviation          | `NE`                          |
 | `zipCode`        | string  | ZIP code                    | `68028`                       |
+| `description`    | string  | Property description        | `Beautiful ranch home...`     |
 | `listPrice`      | number  | Current/original list price | `575000`                      |
 | `soldPrice`      | number  | Final sold price (if sold)  | `570000`                      |
 | `sqft`           | number  | Above-grade living area     | `1890`                        |
 | `basementSqft`   | number  | Finished basement area      | `1686`                        |
 | `totalSqft`      | number  | Total finished square feet  | `3576`                        |
+| `lotSizeSqft`    | number  | Lot size in square feet     | `8712`                        |
 | `beds`           | number  | Number of bedrooms          | `5`                           |
 | `baths`          | number  | Number of bathrooms         | `3`                           |
 | `garage`         | number  | Garage spaces               | `3`                           |
@@ -385,6 +598,7 @@ Each property in the API response includes these standardized fields:
 | `propertyType`   | string  | Type of property            | `Residential`                 |
 | `subdivision`    | string  | Subdivision name            | `REMINGTON WEST`              |
 | `style`          | array   | Architectural styles        | `["Ranch", "Traditional"]`    |
+| `condition`      | string  | Property condition          | `Excellent`                   |
 | `pricePerSqft`   | number  | Price per square foot       | `304`                         |
 | `distance_miles` | number  | Distance from search center | `1.2`                         |
 | `imageUrl`       | string  | Primary property image      | `https://photos...`           |
@@ -734,4 +948,4 @@ ALLOWED_ORIGINS=https://yourdomain.com
 
 ---
 
-_Last Updated: September 1, 2025 - Version 2.1.0 - Added Listing Agent Information_
+_Last Updated: September 7, 2025 - Version 2.2.0 - Added Critical Missing Fields (zipCode, state, description, lotSizeSqft, enhanced baths/condition/style)_
