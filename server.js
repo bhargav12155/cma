@@ -1015,9 +1015,61 @@ app.get("/api/comps", async (req, res) => {
       fireplace: Number(record.FireplacesTotal || 0),
       pool: record.PoolPrivateYN || false,
       waterfront: record.WaterfrontYN || false,
+
+      // Schools
       schoolElementary: record.ElementarySchool || "",
+      schoolElementaryDistrict: record.ElementarySchoolDistrict || "",
       schoolMiddle: record.MiddleOrJuniorSchool || "",
+      schoolMiddleDistrict:
+        record.MiddleSchoolDistrict ||
+        record.MiddleOrJuniorSchoolDistrict ||
+        "",
       schoolHigh: record.HighSchool || "",
+      schoolHighDistrict: record.HighSchoolDistrict || "",
+
+      // Extended Property Details
+      fencing: record.Fencing || "",
+      flooring: record.Flooring || [],
+      foundationDetails: record.FoundationDetails || "",
+      heating: record.Heating || "",
+      gas: record.Gas || "",
+      garageSpaces: Number(record.GarageSpaces || 0),
+      garageYN: record.GarageYN || false,
+      fireplaceFeatures: record.FireplaceFeatures || "",
+      fireplacesTotal: Number(record.FireplacesTotal || 0),
+      fireplaceYN: record.FireplaceYN || false,
+      interiorFeaturesDetailed: record.InteriorFeatures || [],
+      laundryFeatures: record.LaundryFeatures || [],
+
+      // Tier 1 - Critical Property Details
+      propertySubType: record.PropertySubType || "",
+      lotSizeAcres: Number(record.LotSizeAcres || 0),
+      lotSizeSquareFeet: record.LotSizeSquareFeet || null,
+      newConstructionYN: record.NewConstructionYN || false,
+
+      // Tier 2 - High Value Details
+      architecturalStyle: record.ArchitecturalStyle || [],
+      basement: record.Basement || "",
+      basementYN: record.BasementYN || false,
+      cooling: record.Cooling || "",
+      coolingYN: record.CoolingYN || false,
+      appliances: record.Appliances || [],
+      utilities: record.Utilities || [],
+
+      // Financial Details
+      associationFee: Number(record.AssociationFee || 0),
+      associationFeeFrequency: record.AssociationFeeFrequency || "",
+      taxAnnualAmount: Number(record.TaxAnnualAmount || 0),
+      taxYear: record.TaxYear || null,
+
+      // Builder & Construction
+      builderName: record.BuilderName || "",
+      constructionMaterials: record.ConstructionMaterials || [],
+      roof: record.Roof || "",
+
+      // Lot Details
+      lotFeatures: record.LotFeatures || [],
+      lotSizeDimensions: record.LotSizeDimensions || "",
       publicRemarks: record.PublicRemarks || "",
       privateRemarks: record.PrivateRemarks || "",
       mlsNumber: record.ListingId || "",
@@ -1672,6 +1724,14 @@ app.post("/api/property-details-from-address", async (req, res) => {
     );
     console.log("Subdivision:", details.SubdivisionName);
     console.log("Style:", details.ArchitecturalStyle);
+    console.log("School Fields:");
+    console.log("- ElementarySchool:", details.ElementarySchool);
+    console.log(
+      "- ElementarySchoolDistrict:",
+      details.ElementarySchoolDistrict
+    );
+    console.log("- HighSchool:", details.HighSchool);
+    console.log("- HighSchoolDistrict:", details.HighSchoolDistrict);
 
     // Map the square footage fields correctly
     const mappedDetails = {
@@ -1683,6 +1743,33 @@ app.post("/api/property-details-from-address", async (req, res) => {
         details.BuildingAreaTotal ||
         (details.AboveGradeFinishedArea || 0) +
           (details.BelowGradeFinishedArea || 0),
+
+      // Map school fields to expected frontend names
+      schoolElementary: details.ElementarySchool || "",
+      schoolElementaryDistrict: details.ElementarySchoolDistrict || "",
+      schoolMiddle: details.MiddleOrJuniorSchool || "",
+      schoolMiddleDistrict:
+        details.MiddleOrJuniorSchoolDistrict ||
+        details.MiddleSchoolDistrict ||
+        "",
+      schoolHigh: details.HighSchool || "",
+      schoolHighDistrict: details.HighSchoolDistrict || "",
+
+      // Additional property mappings for frontend compatibility
+      city: details.City || "",
+      zipCode: details.PostalCode || "",
+      state: details.StateOrProvince || "",
+      beds: details.BedroomsTotal || 0,
+      baths: details.BathroomsTotalInteger || 0,
+      yearBuilt: details.YearBuilt || 0,
+      garage: details.GarageSpaces || 0,
+      listPrice: details.ListPrice || 0,
+      propertyType: details.PropertyType || "",
+      subdivision: details.SubdivisionName || "",
+      condition: Array.isArray(details.PropertyCondition)
+        ? details.PropertyCondition[0]
+        : "",
+      style: details.ArchitecturalStyle || [],
     };
 
     console.log("Mapped square footage:");
@@ -2207,8 +2294,90 @@ app.get("/api/advanced-search", async (req, res) => {
 
       // Schools
       schoolElementary: record.ElementarySchool || "",
+      schoolElementaryDistrict: record.ElementarySchoolDistrict || "",
       schoolMiddle: record.MiddleOrJuniorSchool || "",
+      schoolMiddleDistrict:
+        record.MiddleSchoolDistrict ||
+        record.MiddleOrJuniorSchoolDistrict ||
+        "",
       schoolHigh: record.HighSchool || "",
+      schoolHighDistrict: record.HighSchoolDistrict || "",
+
+      // Property Details Extended
+      fencing: record.Fencing || "",
+      flooring: record.Flooring || [],
+      foundationDetails: record.FoundationDetails || "",
+      frontageType: record.FrontageType || "",
+
+      // Fireplace
+      fireplaceFeatures: record.FireplaceFeatures || "",
+      fireplacesTotal: Number(record.FireplacesTotal || 0),
+      fireplaceYN: record.FireplaceYN || false,
+
+      // Utilities & Systems
+      heating: record.Heating || "",
+      heatingYN: record.HeatingYN || false,
+      gas: record.Gas || "",
+
+      // Garage & Parking
+      garageSpaces: Number(record.GarageSpaces || 0),
+      garageYN: record.GarageYN || false,
+
+      // Interior Features Extended
+      interiorFeaturesDetailed: record.InteriorFeatures || [],
+      laundryFeatures: record.LaundryFeatures || [],
+
+      // Green Building & Warranties
+      greenBuildingVerificationType: record.GreenBuildingVerificationType || "",
+      homeWarrantyYN: record.HomeWarrantyYN || null,
+
+      // Property Flags
+      habitableResidenceYN: record.HabitableResidenceYN || null,
+      horseYN: record.HorseYN || null,
+      landLeaseYN: record.LandLeaseYN || null,
+
+      // MLS Display Settings
+      idxParticipationYN: record.IDXParticipationYN || false,
+      internetAddressDisplayYN: record.InternetAddressDisplayYN || false,
+      internetAutomatedValuationDisplayYN:
+        record.InternetAutomatedValuationDisplayYN || false,
+      internetConsumerCommentYN: record.InternetConsumerCommentYN || false,
+      internetEntireListingDisplayYN:
+        record.InternetEntireListingDisplayYN || false,
+
+      // Expenses
+      insuranceExpense: record.InsuranceExpense || null,
+      electricExpense: record.ElectricExpense || null,
+
+      // Tier 1 - Critical Property Details
+      propertySubType: record.PropertySubType || "",
+      lotSizeAcres: Number(record.LotSizeAcres || 0),
+      lotSizeSquareFeet: record.LotSizeSquareFeet || null,
+      newConstructionYN: record.NewConstructionYN || false,
+
+      // Tier 2 - High Value Details
+      architecturalStyle: record.ArchitecturalStyle || [],
+      basement: record.Basement || "",
+      basementYN: record.BasementYN || false,
+      cooling: record.Cooling || "",
+      coolingYN: record.CoolingYN || false,
+      appliances: record.Appliances || [],
+      utilities: record.Utilities || [],
+
+      // Financial Details
+      associationFee: Number(record.AssociationFee || 0),
+      associationFeeFrequency: record.AssociationFeeFrequency || "",
+      taxAnnualAmount: Number(record.TaxAnnualAmount || 0),
+      taxYear: record.TaxYear || null,
+
+      // Builder & Construction
+      builderName: record.BuilderName || "",
+      constructionMaterials: record.ConstructionMaterials || [],
+      roof: record.Roof || "",
+
+      // Lot Details
+      lotFeatures: record.LotFeatures || [],
+      lotSizeDimensions: record.LotSizeDimensions || "",
     }));
 
     res.json({

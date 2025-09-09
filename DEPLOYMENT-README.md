@@ -1,23 +1,27 @@
-# 🚀 CMA Real Estate API - Deployment Package v2.2.0
+# 🚀 CMA Real Estate API - Deployment Package v2.5.0
 
 ## 📦 What's Included
 
 This deployment package contains the complete CMA Real Estate API with the latest enhancements:
 
-### ✅ **New Features in v2.2.0:**
+### ✅ **New Features in v2.5.0:**
 
-- **Critical Missing Fields Added**: `zipCode`, `state`, `description`, `lotSizeSqft`
-- **Enhanced Existing Fields**: `baths`, `basementSqft`, `totalSqft`, `condition`, `style`
-- **🔧 Price Validation & Correction**: Automatically detects and fixes MLS data corruption
-- **Comprehensive API Documentation**: Updated with 37+ curl examples
+- **🏫 School District Information**: Complete school data with district names (`schoolElementaryDistrict`, `schoolHighDistrict`, etc.)
+- **🏠 Enhanced Property Details**: 25+ new fields including `builderName`, `architecturalStyle`, `basement`, `cooling`, `appliances`
+- **� Financial Data**: `associationFee`, `taxAnnualAmount`, `lotSizeAcres` for better investment analysis
+- **🏗️ Construction Details**: `newConstructionYN`, `constructionMaterials`, `roof`, `utilities`
+- **📍 Comprehensive Property Fields**: Total of 60+ property attributes now available
+- **📚 Complete Documentation**: New PROPERTY-FIELDS-GUIDE.md with usage examples
+- **🔧 UI Served at Root**: index.html now served at root URL for complete user experience
 
 ### 📁 **Package Contents:**
 
 #### Core Application Files:
 
-- `aws-deployment/server.js` - Main API server with all latest features
-- `aws-deployment/package.json` - Node.js dependencies
-- `aws-deployment/package-lock.json` - Locked dependency versions
+- `server.js` - Main API server with all latest features and enhanced property fields
+- `index.html` - Complete CMA UI application
+- `package.json` - Node.js dependencies
+- `package-lock.json` - Locked dependency versions
 - `aws-deployment/index.html` - Web interface for CMA tool
 - `aws-deployment/Procfile` - AWS Elastic Beanstalk configuration
 
