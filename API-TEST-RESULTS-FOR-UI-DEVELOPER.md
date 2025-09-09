@@ -2,7 +2,7 @@
 
 **For UI Developer Reference**  
 **Date:** September 5, 2025  
-**Backend URL:** `https://gbcma.us-east-2.elasticbeanstalk.com`  
+**Backend URL:** `http://gbcma.us-east-2.elasticbeanstalk.com`  
 **Local Testing:** `http://localhost:3002`
 
 ---
@@ -661,7 +661,7 @@ POST /api/teams/1/members
 
 ## 📞 **Backend Contact**
 
-**Production API:** `https://gbcma.us-east-2.elasticbeanstalk.com`  
+**Production API:** `http://gbcma.us-east-2.elasticbeanstalk.com`  
 **All endpoints tested and working with real MLS data**  
 **Ready for UI integration** ✅
 

@@ -507,6 +507,9 @@ app.get("/api/cma-comparables", async (req, res) => {
     min_price,
     max_price,
     property_type,
+    // New filtering options
+    status = "both", // "active", "closed", "both"
+    exclude_zero_price = "false", // "true" to exclude properties with $0 price
   } = req.query;
 
   //console.log("Received CMA comparables request:", req.query);
@@ -744,39 +747,57 @@ app.get("/api/cma-comparables", async (req, res) => {
     //console.log("Active Properties Query:", activeUrl);
     //console.log("Closed Properties Query:", closedUrl);
 
-    // Execute both queries in parallel
-    const [activeResponse, closedResponse] = await Promise.all([
-      fetch(activeUrl),
-      fetch(closedUrl),
-    ]);
+    // Execute queries based on status filter
+    let activeResponse = null;
+    let closedResponse = null;
 
-    if (!activeResponse.ok) {
-      console.error(
-        "Active properties query failed:",
-        activeResponse.status,
-        await activeResponse.text()
-      );
-      throw new Error(
-        `Active properties query failed: ${activeResponse.status}`
-      );
+    if (status === "active" || status === "both") {
+      activeResponse = await fetch(activeUrl);
+      if (!activeResponse.ok) {
+        console.error(
+          "Active properties query failed:",
+          activeResponse.status,
+          await activeResponse.text()
+        );
+        throw new Error(
+          `Active properties query failed: ${activeResponse.status}`
+        );
+      }
     }
 
-    if (!closedResponse.ok) {
-      console.error(
-        "Closed properties query failed:",
-        closedResponse.status,
-        await closedResponse.text()
-      );
-      throw new Error(
-        `Closed properties query failed: ${closedResponse.status}`
-      );
+    if (status === "closed" || status === "both") {
+      closedResponse = await fetch(closedUrl);
+      if (!closedResponse.ok) {
+        console.error(
+          "Closed properties query failed:",
+          closedResponse.status,
+          await closedResponse.text()
+        );
+        throw new Error(
+          `Closed properties query failed: ${closedResponse.status}`
+        );
+      }
     }
 
-    const activeData = await activeResponse.json();
-    const closedData = await closedResponse.json();
+    const activeData = activeResponse
+      ? await activeResponse.json()
+      : { value: [] };
+    const closedData = closedResponse
+      ? await closedResponse.json()
+      : { value: [] };
 
-    const activeProperties = activeData.value || [];
-    const closedProperties = closedData.value || [];
+    let activeProperties = activeData.value || [];
+    let closedProperties = closedData.value || [];
+
+    // Filter out properties with zero/null prices if requested
+    if (exclude_zero_price === "true") {
+      activeProperties = activeProperties.filter(
+        (prop) => prop.ListPrice && prop.ListPrice > 0
+      );
+      closedProperties = closedProperties.filter(
+        (prop) => prop.ClosePrice && prop.ClosePrice > 0
+      );
+    }
 
     // //console.log(
     //   `Found ${activeProperties.length} active and ${closedProperties.length} closed properties`
@@ -879,8 +900,8 @@ app.get("/api/cma-comparables", async (req, res) => {
       combined: [...filteredActive, ...filteredClosed], // For convenience
       properties: [...filteredActive, ...filteredClosed], // For client compatibility
       meta: {
-        activeQuery: activeUrl,
-        closedQuery: closedUrl,
+        activeQuery: activeResponse ? activeUrl : null,
+        closedQuery: closedResponse ? closedUrl : null,
         searchCriteria: {
           city,
           sqft,
@@ -888,6 +909,8 @@ app.get("/api/cma-comparables", async (req, res) => {
           sqft_delta,
           months_back,
           dateFilter,
+          status,
+          exclude_zero_price,
         },
       },
     });
