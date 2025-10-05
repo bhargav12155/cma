@@ -1,6 +1,6 @@
 {
   "name": "cma-api",
-  "version": "2.9.2",
+  "version": "2.10.1",
   "type": "commonjs",
   "description": "CMA Real Estate API with Bearer Token Authentication and Active Listings",
   "main": "server.js",

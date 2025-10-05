@@ -1,5 +1,51 @@
 # 🚀 CMA API - Production Deployment Guide
 
+## 📖 **Overview**
+
+This guide covers the production deployment of the CMA (Comparative Market Analysis) API to AWS Elastic Beanstalk. The API provides comprehensive property data, search functionality, and school district information for real estate applications.
+
+## 🏗️ **Production Environment Details**
+
+- **Platform**: AWS Elastic Beanstalk
+- **Runtime**: Node.js 22 on 64bit Amazon Linux 2023
+- **Application Name**: GBCMA
+- **Environment**: GBCMA-env
+- **URL**: `http://gbcma.us-east-2.elasticbeanstalk.com/`
+- **S3 Bucket**: `elasticbeanstalk-us-east-2-513371322890`
+
+## 🛠️ **Deployment Process**
+
+### **Step 1: Package Creation**
+
+Use the standardized deployment script that follows the proven `working.zip` structure:
+
+```bash
+# Make the script executable (if needed)
+chmod +x create-working-package.sh
+
+# Create and deploy package
+./create-working-package.sh
+```
+
+This script creates a deployment package with the correct file structure that includes all required modules:
+
+- `server.js` - Main application server
+- `package.json` - Dependencies and configuration
+- `advancedSearchParamParser.js` - Search parameter handling
+- `community-aliases.js` - Community name mapping
+- `community-resolver-endpoint.js` - Community resolution logic
+- All other necessary files for production deployment
+
+### **Step 2: Verification**
+
+After deployment, the script provides:
+
+- Deployment status and version number
+- Live URL for immediate testing
+- Automated health check verification
+
+**Important**: Only use `create-working-package.sh` for deployments. This script has been verified to include all required dependencies and follows the proven working structure.
+
 ## 🎉 **DEPLOYMENT SUCCESSFUL!**
 
 Your CMA API is now live at: **`http://gbcma.us-east-2.elasticbeanstalk.com/`**

@@ -105,13 +105,9 @@ let teamIdCounter = 1;
 
 // --- 5. Endpoints ---
 
-// Root health
+// Root - serve HTML page
 app.get("/", (req, res) => {
-  res.json({
-    message: "Simple CMA API is running",
-    status: "healthy",
-    timestamp: new Date().toISOString(),
-  });
+  res.sendFile(path.join(__dirname, "index.html"));
 });
 
 /**
@@ -1656,6 +1652,219 @@ app.get("/api/property-reference", async (req, res) => {
       message: "Failed to proxy property reference.",
       details: err.message,
     });
+  }
+});
+
+// --------------------------------------------------------------
+// NEW ADVANCED PROPERTY SEARCH (Phase 1) - /api/property-search-advanced
+// --------------------------------------------------------------
+const {
+  parseParams: parseAdvancedParams,
+} = require("./advancedSearchParamParser");
+
+app.get("/api/property-search-advanced", async (req, res) => {
+  const started = Date.now();
+  try {
+    const { applied, ignored } = parseAdvancedParams(req.query);
+
+    // Build upstream coarse filter using only status + simple narrowing to avoid huge payloads.
+    const upstreamFilters = [];
+    if (applied.city)
+      upstreamFilters.push(`tolower(City) eq '${applied.city.toLowerCase()}'`);
+    if (applied.subdivision)
+      upstreamFilters.push(
+        `contains(tolower(SubdivisionName),'${applied.subdivision.toLowerCase()}')`
+      );
+    if (applied.property_type)
+      upstreamFilters.push(`PropertyType eq '${applied.property_type}'`);
+    if (applied.statuses && applied.statuses.length === 1) {
+      upstreamFilters.push(
+        `tolower(StandardStatus) eq '${applied.statuses[0].toLowerCase()}'`
+      );
+    }
+    // For multi-status >1 we'll post-filter locally.
+
+    const filterString = upstreamFilters.length
+      ? `$filter=${encodeURIComponent(upstreamFilters.join(" and "))}`
+      : "";
+    const selectFields = [
+      "ListingKey",
+      "ListingId",
+      "UnparsedAddress",
+      "City",
+      "StateOrProvince",
+      "PostalCode",
+      "StandardStatus",
+      "MlsStatus",
+      "SubdivisionName",
+      "BedroomsTotal",
+      "BathroomsTotalInteger",
+      "LivingArea",
+      "AboveGradeFinishedArea",
+      "BelowGradeFinishedArea",
+      "LotSizeSquareFeet",
+      "LotSizeAcres",
+      "YearBuilt",
+      "GarageSpaces",
+      "ListPrice",
+      "ClosePrice",
+      "Latitude",
+      "Longitude",
+      "ModificationTimestamp",
+      "OnMarketDate",
+      "CloseDate",
+      "PublicRemarks",
+      "PropertyType",
+      "PropertySubType",
+      "ArchitecturalStyle",
+      "Media",
+      "WaterfrontYN",
+      "NewConstructionYN",
+    ].join(",");
+
+    const odata = `${filterString}&$select=${selectFields}&$top=${applied.limit}`;
+    const apiUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?access_token=${paragonApiConfig.serverToken}&${odata}`;
+
+    const upstreamResp = await fetch(apiUrl);
+    if (!upstreamResp.ok) {
+      const txt = await upstreamResp.text();
+      throw new Error(`Upstream error ${upstreamResp.status}: ${txt}`);
+    }
+    const upstreamJson = await upstreamResp.json();
+    const rows = upstreamJson.value || [];
+
+    // Enrichment + Derived fields
+    const now = new Date();
+    const currentYear = now.getFullYear();
+
+    const enriched = rows.map((r) => {
+      const living = r.AboveGradeFinishedArea || r.LivingArea || 0;
+      const totalSqft = living + (r.BelowGradeFinishedArea || 0);
+      const listPrice = r.ListPrice || 0;
+      const pricePerSqft =
+        totalSqft > 0 && listPrice > 0
+          ? Math.round(listPrice / totalSqft)
+          : null;
+      const listingDate = r.OnMarketDate; // limited to selected fields
+      let daysOnMarket = null;
+      if (listingDate) {
+        const d = new Date(listingDate);
+        if (!isNaN(d.getTime())) {
+          daysOnMarket = Math.floor((now - d) / 86400000);
+        }
+      }
+      const status = (r.StandardStatus || r.MlsStatus || "").trim();
+      const images = Array.isArray(r.Media)
+        ? r.Media.map((m) => m.MediaURL).filter(Boolean)
+        : [];
+      const hasBasement = (r.BelowGradeFinishedArea || 0) > 0;
+      const isWaterfront = !!r.WaterfrontYN; // Phase 1 simple flag; token logic later if needed
+      const isNewConstruction =
+        !!r.NewConstructionYN ||
+        (r.YearBuilt && r.YearBuilt >= currentYear - 2);
+      return {
+        id: r.ListingKey || r.ListingId,
+        mlsNumber: r.ListingId || "",
+        address: r.UnparsedAddress || "",
+        city: r.City || "",
+        state: r.StateOrProvince || "",
+        zipCode: r.PostalCode || "",
+        subdivision: r.SubdivisionName || "",
+        propertyType: r.PropertyType || "",
+        propertySubType: r.PropertySubType || "",
+        architecturalStyle: Array.isArray(r.ArchitecturalStyle)
+          ? r.ArchitecturalStyle[0]
+          : r.ArchitecturalStyle || "",
+        listPrice,
+        closePrice: r.ClosePrice || null,
+        pricePerSqft,
+        beds: r.BedroomsTotal || 0,
+        baths: r.BathroomsTotalInteger || 0,
+        livingArea: living,
+        belowGradeFinishedArea: r.BelowGradeFinishedArea || 0,
+        lotSquareFeet:
+          r.LotSizeSquareFeet ||
+          (r.LotSizeAcres ? Math.round(r.LotSizeAcres * 43560) : null),
+        garageSpaces: r.GarageSpaces || 0,
+        yearBuilt: r.YearBuilt || null,
+        daysOnMarket: daysOnMarket || 0,
+        listingContractDate: listingDate || null,
+        modificationTimestamp: r.ModificationTimestamp || null,
+        status,
+        images,
+        image: images[0] || null,
+        hasBasement,
+        isWaterfront,
+        isNewConstruction,
+        latitude: r.Latitude || null,
+        longitude: r.Longitude || null,
+      };
+    });
+
+    // Post-filters (local)
+    let filtered = enriched;
+    if (applied.statuses && applied.statuses.length > 1) {
+      const set = new Set(applied.statuses);
+      filtered = filtered.filter((p) => set.has(p.status));
+    }
+    if (applied.min_sqft !== undefined)
+      filtered = filtered.filter((p) => p.livingArea >= applied.min_sqft);
+    if (applied.max_sqft !== undefined)
+      filtered = filtered.filter((p) => p.livingArea <= applied.max_sqft);
+    if (applied.min_year_built !== undefined)
+      filtered = filtered.filter(
+        (p) => p.yearBuilt && p.yearBuilt >= applied.min_year_built
+      );
+    if (applied.max_year_built !== undefined)
+      filtered = filtered.filter(
+        (p) => p.yearBuilt && p.yearBuilt <= applied.max_year_built
+      );
+    if (applied.min_garage !== undefined)
+      filtered = filtered.filter((p) => p.garageSpaces >= applied.min_garage);
+    if (applied.waterfront === true)
+      filtered = filtered.filter((p) => p.isWaterfront);
+    if (applied.new_construction === true)
+      filtered = filtered.filter((p) => p.isNewConstruction);
+    if (applied.photo_only === true)
+      filtered = filtered.filter((p) => p.images && p.images.length > 0);
+
+    // Sorting
+    filtered.sort((a, b) => {
+      const field = applied.sort_by;
+      const av = a[field];
+      const bv = b[field];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (av === bv) return 0;
+      return applied.sort_order === "asc"
+        ? av > bv
+          ? 1
+          : -1
+        : av < bv
+        ? 1
+        : -1;
+    });
+
+    // Limit (already upstream-limited, but after post-filter must slice)
+    filtered = filtered.slice(0, applied.limit);
+
+    const timingMs = Date.now() - started;
+    res.json({
+      success: true,
+      count: filtered.length,
+      properties: filtered,
+      meta: {
+        appliedFilters: applied,
+        ignoredParams: ignored,
+        sort: { by: applied.sort_by, order: applied.sort_order },
+        timingMs,
+        source: "live",
+      },
+    });
+  } catch (err) {
+    console.error("[ADVANCED-SEARCH] error", err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -3698,8 +3907,8 @@ async function aggregateCommunitiesBase({
       `access_token=${
         paragonApiConfig.serverToken
       }&$filter=${encodeURIComponent(filterString)}` +
-      // Include multiple potential status-related fields for more robust active detection
-      `&$select=SubdivisionName,City,StandardStatus,Status,ListingStatus,MlsStatus,PropertyType&$top=${pageSize}&$skip=${skip}`;
+      // Only select supported fields (removed Status,ListingStatus,MlsStatus which cause 400 errors)
+      `&$select=SubdivisionName,City,StandardStatus,PropertyType&$top=${pageSize}&$skip=${skip}`;
     apiCalls++;
     const resp = await fetch(apiUrl);
     if (!resp.ok) {
@@ -3734,13 +3943,8 @@ async function aggregateCommunitiesBase({
       }
       const entry = subdivisionCounts[normKey];
       entry.totalProperties++;
-      // Unified active detection logic
-      const statusCandidates = [
-        prop.StandardStatus,
-        prop.Status,
-        prop.ListingStatus,
-        prop.MlsStatus,
-      ].filter(Boolean);
+      // Simplified active detection logic using only StandardStatus (supported field)
+      const statusCandidates = [prop.StandardStatus].filter(Boolean);
       const statusLower = statusCandidates.map((s) => String(s).toLowerCase());
       const isActive = statusLower.some((s) =>
         [
@@ -4063,6 +4267,6 @@ app.get("/api/cities", async (req, res) => {
 });
 
 // --- 6. Start ---
-app.listen(PORT, () =>
+app.listen(PORT, "0.0.0.0", () =>
   console.log(`Server running at http://localhost:${PORT}`)
 );
