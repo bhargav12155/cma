@@ -9,7 +9,7 @@ const fetch = (...args) =>
 
 // --- 2. Init App ---
 const app = express();
-const PORT = process.env.PORT || 3002;
+const PORT = process.env.PORT || 3001;
 
 // --- 3. Middleware ---
 app.use(cors());
@@ -423,6 +423,38 @@ app.get("/api/property-search", async (req, res) => {
     }
 
     const data = await response.json();
+
+    // Add detailed logging to show all available property fields
+    if (data.value && data.value.length > 0) {
+      const sampleProperty = data.value[0];
+      console.log('===== AVAILABLE CMA API PROPERTY FIELDS =====');
+      try {
+        // Log only field names to avoid overwhelming the console
+        console.log(Object.keys(sampleProperty).sort().join(', '));
+        
+        // Create a detailed log file of all property fields
+        const fs = require('fs');
+        const logDir = path.join(__dirname, 'logs');
+        
+        // Create logs directory if it doesn't exist
+        if (!fs.existsSync(logDir)) {
+          fs.mkdirSync(logDir);
+        }
+        
+        // Write the full property data to a log file
+        fs.writeFileSync(
+          path.join(logDir, 'property-fields-log.json'), 
+          JSON.stringify({
+            fields: Object.keys(sampleProperty).sort(),
+            sampleProperty: sampleProperty
+          }, null, 2)
+        );
+        console.log('Detailed property fields logged to logs/property-fields-log.json');
+      } catch (logError) {
+        console.error('Error logging property fields:', logError.message);
+      }
+      console.log('======================================');
+    }
 
     // Transform the data to a consistent format
     const properties =
@@ -4263,6 +4295,62 @@ app.get("/api/cities", async (req, res) => {
   } catch (err) {
     console.error("[CITIES] Error:", err);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// --- 5.5 Field Inspection Endpoint ---
+app.get("/api/inspect-property-fields", async (req, res) => {
+  try {
+    // Build Paragon API URL
+    const baseUrl = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties`;
+    const accessToken = `access_token=${paragonApiConfig.serverToken}`;
+    
+    // Only fetch one property to inspect fields
+    const apiUrl = `${baseUrl}?${accessToken}&$top=1`;
+    
+    console.log("Field inspection API URL:", apiUrl);
+
+    // Make API request
+    const response = await fetch(apiUrl);
+
+    if (!response.ok) {
+      throw new Error(
+        `Paragon API error: ${response.status} ${response.statusText}`
+      );
+    }
+
+    const data = await response.json();
+    
+    // Process the data
+    if (!data.value || data.value.length === 0) {
+      return res.json({
+        success: false,
+        message: "No properties found to inspect fields"
+      });
+    }
+    
+    const sampleProperty = data.value[0];
+    const fields = Object.keys(sampleProperty).sort();
+    
+    // Create a processed view with field names and their values
+    const fieldValues = {};
+    fields.forEach(field => {
+      fieldValues[field] = sampleProperty[field];
+    });
+    
+    // Return the field information
+    res.json({
+      success: true,
+      availableFields: fields,
+      fieldCount: fields.length,
+      sampleValues: fieldValues
+    });
+  } catch (error) {
+    console.error("Property field inspection error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
