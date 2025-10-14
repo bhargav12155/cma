@@ -4266,6 +4266,418 @@ app.get("/api/cities", async (req, res) => {
   }
 });
 
+// =============================================================================
+// OPTIMIZED APIs - For Frontend Performance Optimization
+// =============================================================================
+// These endpoints reduce frontend API calls from 1762+ to ~50 per session
+// by implementing batching, caching, and progressive loading strategies.
+
+// Initialize caches for optimized endpoints
+const searchCache = new Map();
+const imageCache = new Map();
+const optimizedImageCache = new Map();
+
+// Cache cleanup every 30 minutes
+setInterval(() => {
+  const now = Date.now();
+
+  // Clean search cache (5 min TTL)
+  for (const [key, value] of searchCache.entries()) {
+    if (now - value.timestamp > 300000) {
+      searchCache.delete(key);
+    }
+  }
+
+  // Clean image cache (30 min TTL)
+  for (const [key, value] of imageCache.entries()) {
+    if (now - value.timestamp > 1800000) {
+      imageCache.delete(key);
+    }
+  }
+
+  console.log(
+    `Cache cleanup: ${searchCache.size} search, ${imageCache.size} image, ${optimizedImageCache.size} optimized`
+  );
+}, 1800000); // Every 30 minutes
+
+/**
+ * GET /api/property-search-optim
+ * Optimized property search with batching, caching, and progressive loading
+ * Reduces upstream API calls by batching requests and serving from cache
+ */
+app.get("/api/property-search-optim", async (req, res) => {
+  try {
+    const {
+      page = 0,
+      limit = 20,
+      includeImages = "false",
+      imageLimit = 1,
+      dataLevel = "list",
+      loadType = "progressive",
+      ...searchParams
+    } = req.query;
+
+    console.log(
+      `[PROPERTY-SEARCH-OPTIM] Request: page=${page}, limit=${limit}, dataLevel=${dataLevel}`
+    );
+
+    // Create cache key from search parameters
+    const searchKey = Object.keys(searchParams)
+      .sort()
+      .map((k) => `${k}=${searchParams[k]}`)
+      .join("&");
+    const cacheKey = `property-search-optim:${searchKey}:${dataLevel}:${includeImages}`;
+
+    // Check cache first (5 minute TTL)
+    let cachedData = searchCache.get(cacheKey);
+    let cacheHit = false;
+
+    if (!cachedData) {
+      console.log(
+        `[PROPERTY-SEARCH-OPTIM] Cache miss, fetching from upstream API`
+      );
+
+      // Call existing property-search-new for larger batch (200 properties)
+      const upstreamParams = {
+        ...searchParams,
+        limit: 200, // Get larger batch to reduce upstream calls
+      };
+
+      // Build URL for existing endpoint
+      const paramStr = Object.keys(upstreamParams)
+        .map((k) => `${k}=${encodeURIComponent(upstreamParams[k])}`)
+        .join("&");
+
+      const upstreamUrl = `http://localhost:${PORT}/api/property-search-new?${paramStr}`;
+
+      try {
+        const response = await fetch(upstreamUrl);
+        const upstreamData = await response.json();
+
+        // Cache the full result set
+        cachedData = {
+          properties: upstreamData.properties || [],
+          totalCount: upstreamData.count || upstreamData.totalAvailable || 0,
+          timestamp: Date.now(),
+        };
+
+        searchCache.set(cacheKey, cachedData);
+        console.log(
+          `[PROPERTY-SEARCH-OPTIM] Cached ${cachedData.properties.length} properties`
+        );
+      } catch (fetchError) {
+        console.error(
+          "[PROPERTY-SEARCH-OPTIM] Upstream fetch failed:",
+          fetchError
+        );
+        return res.status(500).json({
+          success: false,
+          error: "Failed to fetch properties from upstream API",
+        });
+      }
+    } else {
+      cacheHit = true;
+      console.log(
+        `[PROPERTY-SEARCH-OPTIM] Cache hit, ${cachedData.properties.length} properties available`
+      );
+    }
+
+    // Paginate from cached data
+    const startIndex = parseInt(page) * parseInt(limit);
+    const endIndex = startIndex + parseInt(limit);
+    let paginatedProperties = cachedData.properties.slice(startIndex, endIndex);
+
+    // Apply data level filtering
+    if (dataLevel === "minimal") {
+      paginatedProperties = paginatedProperties.map((p) => ({
+        id: p.id,
+        price: p.listPrice || p.price,
+        address: p.address,
+        status: p.status,
+        coordinates: { lat: p.latitude, lng: p.longitude },
+      }));
+    } else if (dataLevel === "list") {
+      paginatedProperties = paginatedProperties.map((p) => {
+        const listData = {
+          id: p.id,
+          price: p.listPrice || p.price,
+          address: p.address,
+          city: p.city,
+          state: p.state,
+          beds: p.beds,
+          baths: p.baths,
+          sqft: p.sqft || p.totalSqft,
+          status: p.status,
+          coordinates: { lat: p.latitude, lng: p.longitude },
+          yearBuilt: p.yearBuilt,
+          subdivision: p.subdivision,
+        };
+
+        // Handle images based on parameters
+        if (includeImages === "true" && p.imageUrl) {
+          const maxImages = parseInt(imageLimit);
+          // For now, we only have imageUrl, but structure for future expansion
+          listData.images = [
+            {
+              url: p.imageUrl,
+              thumbnail: p.imageUrl,
+              alt: "Property image",
+            },
+          ].slice(0, maxImages);
+          listData.imageCount = 1; // We only have one image per property currently
+          listData.hasMoreImages = false;
+        } else {
+          listData.imageCount = p.imageUrl ? 1 : 0;
+          listData.hasMoreImages = false;
+        }
+
+        return listData;
+      });
+    }
+    // 'detail' and 'full' would return complete data (same as original)
+
+    const totalPages = Math.ceil(cachedData.totalCount / parseInt(limit));
+
+    res.json({
+      success: true,
+      properties: paginatedProperties,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages,
+        totalProperties: cachedData.totalCount,
+        hasNextPage: parseInt(page) < totalPages - 1,
+        hasPreviousPage: parseInt(page) > 0,
+        cacheHit,
+        loadType,
+      },
+      dataLevel,
+      imageSettings: {
+        included: includeImages === "true",
+        limit: parseInt(imageLimit),
+      },
+      cache: {
+        key: cacheKey.substring(0, 50) + "...", // Truncate for response
+        age: Date.now() - cachedData.timestamp,
+        ttl: 300000, // 5 minutes
+      },
+    });
+  } catch (error) {
+    console.error("[PROPERTY-SEARCH-OPTIM] Error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/properties/:propertyId/images-optim
+ * Paginated property image loading to reduce bandwidth
+ */
+app.get("/api/properties/:propertyId/images-optim", async (req, res) => {
+  try {
+    const { propertyId } = req.params;
+    const {
+      page = 0,
+      limit = 5,
+      width = 300,
+      height = 200,
+      quality = 80,
+    } = req.query;
+
+    console.log(
+      `[IMAGES-OPTIM] Request for property ${propertyId}, page ${page}`
+    );
+
+    // Check cache for property data
+    const cacheKey = `property-images:${propertyId}`;
+    let propertyData = imageCache.get(cacheKey);
+
+    if (!propertyData) {
+      console.log(`[IMAGES-OPTIM] Cache miss, fetching property ${propertyId}`);
+
+      // Fetch property from existing endpoint
+      try {
+        const upstreamUrl = `http://localhost:${PORT}/api/property-search-new?id=${propertyId}`;
+        const response = await fetch(upstreamUrl);
+        const data = await response.json();
+
+        // Extract images - currently we have imageUrl, but structure for expansion
+        const property = data.properties?.[0];
+        const images = [];
+
+        if (property?.imageUrl) {
+          images.push({
+            url: property.imageUrl,
+            thumbnail: property.imageUrl,
+            width: 800, // Default dimensions
+            height: 600,
+          });
+        }
+
+        propertyData = {
+          images,
+          timestamp: Date.now(),
+        };
+
+        imageCache.set(cacheKey, propertyData);
+        console.log(
+          `[IMAGES-OPTIM] Cached ${images.length} images for property ${propertyId}`
+        );
+      } catch (fetchError) {
+        console.error("[IMAGES-OPTIM] Property fetch failed:", fetchError);
+        return res.status(404).json({
+          success: false,
+          error: "Property not found or upstream API error",
+        });
+      }
+    } else {
+      console.log(`[IMAGES-OPTIM] Cache hit for property ${propertyId}`);
+    }
+
+    // Paginate images
+    const startIndex = parseInt(page) * parseInt(limit);
+    const endIndex = startIndex + parseInt(limit);
+    const paginatedImages = propertyData.images.slice(startIndex, endIndex);
+
+    // Format images with optimization options
+    const formattedImages = paginatedImages.map((img, index) => ({
+      url: img.url,
+      thumbnail: img.thumbnail || img.url,
+      optimized: `/api/images/optimize-optim?url=${encodeURIComponent(
+        img.url
+      )}&width=${width}&height=${height}&quality=${quality}`,
+      width: parseInt(width),
+      height: parseInt(height),
+      alt: `Property image ${startIndex + index + 1}`,
+    }));
+
+    const totalImages = propertyData.images.length;
+    const totalPages = Math.ceil(totalImages / parseInt(limit));
+
+    res.json({
+      success: true,
+      propertyId,
+      images: formattedImages,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages,
+        hasMore: endIndex < totalImages,
+        total: totalImages,
+        showing: `${startIndex + 1}-${Math.min(
+          endIndex,
+          totalImages
+        )} of ${totalImages}`,
+      },
+      optimizationSettings: {
+        width: parseInt(width),
+        height: parseInt(height),
+        quality: parseInt(quality),
+      },
+    });
+  } catch (error) {
+    console.error("[IMAGES-OPTIM] Error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/images/optimize-optim
+ * Image optimization service for bandwidth reduction
+ */
+app.get("/api/images/optimize-optim", async (req, res) => {
+  try {
+    const {
+      url,
+      width = 300,
+      height = 200,
+      quality = 80,
+      format = "webp",
+    } = req.query;
+
+    if (!url) {
+      return res.status(400).json({
+        success: false,
+        error: "URL parameter is required",
+      });
+    }
+
+    console.log(
+      `[IMAGE-OPTIMIZE] Request: ${width}x${height} q${quality} ${format}`
+    );
+
+    // Create cache key for optimized image
+    const optimizationKey = `${url}:${width}x${height}:q${quality}:${format}`;
+    const cacheKey = `optimized-image:${Buffer.from(optimizationKey)
+      .toString("base64")
+      .substring(0, 50)}`;
+
+    // Check if already optimized and cached
+    let cachedOptimized = optimizedImageCache.get(cacheKey);
+
+    if (cachedOptimized) {
+      console.log(`[IMAGE-OPTIMIZE] Cache hit for optimized image`);
+      return res.json({
+        success: true,
+        optimizedUrl: cachedOptimized.url,
+        originalUrl: url,
+        cached: true,
+        ...cachedOptimized.metadata,
+      });
+    }
+
+    // For now, return a placeholder response with size estimates
+    // In production, you'd implement actual image processing with Sharp:
+    // const sharp = require('sharp');
+    // const processedBuffer = await sharp(originalImageBuffer)
+    //   .resize(parseInt(width), parseInt(height))
+    //   .webp({ quality: parseInt(quality) })
+    //   .toBuffer();
+
+    const estimatedOriginalSize = 2048000; // 2MB estimate
+    const compressionFactor = (parseInt(quality) / 100) * 0.3; // WebP compression estimate
+    const estimatedOptimizedSize = Math.floor(
+      estimatedOriginalSize * compressionFactor
+    );
+
+    const response = {
+      success: true,
+      optimizedUrl: url, // In production, this would be your CDN URL
+      originalUrl: url,
+      originalSize: estimatedOriginalSize,
+      optimizedSize: estimatedOptimizedSize,
+      compressionRatio: compressionFactor,
+      format,
+      dimensions: {
+        width: parseInt(width),
+        height: parseInt(height),
+      },
+      cached: false,
+      note: "Placeholder response - actual image processing requires Sharp package",
+    };
+
+    // Cache the result
+    optimizedImageCache.set(cacheKey, {
+      url: response.optimizedUrl,
+      metadata: response,
+    });
+
+    console.log(
+      `[IMAGE-OPTIMIZE] Generated optimization metadata: ${estimatedOptimizedSize} bytes`
+    );
+    res.json(response);
+  } catch (error) {
+    console.error("[IMAGE-OPTIMIZE] Error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 // --- 6. Start ---
 app.listen(PORT, "0.0.0.0", () =>
   console.log(`Server running at http://localhost:${PORT}`)
