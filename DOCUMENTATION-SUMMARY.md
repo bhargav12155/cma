@@ -1,8 +1,34 @@
 # 📚 CMA API Documentation Summary
 
-## 🎉 **NEW: Communities API v2.9.0**
+## 🎉 **NEW: Open Houses API**
 
-**Released: September 16, 2025**
+**Released: June 10, 2023**
+
+## 📋 **Documentation Created**
+
+### 1. **🏠 [OPEN-HOUSES-API-GUIDE.md](./OPEN-HOUSES-API-GUIDE.md)**
+
+**Complete documentation for the new Open Houses API endpoint**
+
+**Key Features:**
+
+- ✅ Structured open house data (date, time, status)
+- ✅ Date range filtering for open houses
+- ✅ Automatic day-of-week detection
+- ✅ Intelligent fallback to remarks parsing
+- ✅ Human-friendly formatted display strings
+
+**Quick Example:**
+
+```bash
+curl "http://gbcma.us-east-2.elasticbeanstalk.com/api/open-houses?start_date=2023-06-15&end_date=2023-06-30"
+```
+
+---
+
+## 🎉 **Communities API v2.9.0**
+
+**Released: September 16, 2022**
 
 ---
 
@@ -48,7 +74,8 @@ curl "http://gbcma.us-east-2.elasticbeanstalk.com/api/communities?status=active&
 | `/api/property-search`     | Basic property search               | ✅ Active         |
 | `/api/property-search-new` | Enhanced search with StandardStatus | ✅ Active         |
 | `/api/cma-comparables`     | CMA comparables analysis            | ✅ Active         |
-| `/api/communities`         | Communities/subdivisions list       | 🆕 **NEW v2.9.0** |
+| `/api/communities`         | Communities/subdivisions list       | ✅ Active         |
+| `/api/open-houses`         | Structured open house data          | 🆕 **NEW**        |
 | `/api/comps`               | Property comparables                | ✅ Active         |
 | `/api/property-reference`  | Property reference lookup           | ✅ Active         |
 | `/api/health`              | API health check                    | ✅ Active         |
