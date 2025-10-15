@@ -9,7 +9,7 @@ const fetch = (...args) =>
 
 // --- 2. Init App ---
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3002;
 
 // --- 3. Middleware ---
 app.use(cors());
