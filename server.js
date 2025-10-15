@@ -202,6 +202,12 @@ app.get("/api/property-search", async (req, res) => {
     waterfront,
     new_construction,
 
+    // Open House filters
+    has_open_house,
+    open_house_date,
+    open_house_start_time,
+    open_house_end_time,
+
     // Sorting and pagination
     sort_by = "price", // price, sqft, beds, date, newest
     sort_order = "asc", // asc, desc
@@ -343,6 +349,30 @@ app.get("/api/property-search", async (req, res) => {
       filters.push(`NewConstructionYN eq true`);
     }
 
+    // Open House filters
+    if (has_open_house === "true") {
+      filters.push(`HasOpenHouse eq true`);
+    } else if (has_open_house === "false") {
+      filters.push(`HasOpenHouse eq false`);
+    }
+    if (open_house_date) {
+      // Support date filtering (exact match or range)
+      if (open_house_date.includes("-")) {
+        // Date range: "2025-10-15-2025-10-20"
+        const [startDate, endDate] = open_house_date.split("-").slice(0, 2);
+        filters.push(`OpenHouseDate ge ${startDate} and OpenHouseDate le ${endDate}`);
+      } else {
+        // Exact date: "2025-10-15"
+        filters.push(`OpenHouseDate eq ${open_house_date}`);
+      }
+    }
+    if (open_house_start_time) {
+      filters.push(`OpenHouseStartTime ge '${open_house_start_time}'`);
+    }
+    if (open_house_end_time) {
+      filters.push(`OpenHouseEndTime le '${open_house_end_time}'`);
+    }
+
     // Build the complete filter string
     const filterString = filters.join(" and ");
 
@@ -395,6 +425,14 @@ app.get("/api/property-search", async (req, res) => {
       "LotSizeSquareFeet",
       "WaterfrontYN",
       "NewConstructionYN",
+      // Open House Scheduling Fields
+      "OpenHouseDate",
+      "OpenHouseTime",
+      "OpenHouseStartTime",
+      "OpenHouseEndTime",
+      "HasOpenHouse",
+      "ShowingInstructions",
+      "ModificationTimestamp",
     ].join(",");
 
     let apiUrl = `${baseUrl}?${accessToken}`;
@@ -499,6 +537,18 @@ app.get("/api/property-search", async (req, res) => {
               property.Media[0].PreferredPhotoURL ||
               ""
             : "",
+        // Add time-related field (using onMarketDate or current time)
+        time: property.OnMarketDate || property.ModificationTimestamp || new Date().toISOString(),
+        // Add open house fields
+        openHouseDate: formatDate(property.OpenHouseDate),
+        openHouseTime: property.OpenHouseTime || 
+          (property.OpenHouseStartTime && property.OpenHouseEndTime ? 
+            `${formatTime(property.OpenHouseStartTime)} - ${formatTime(property.OpenHouseEndTime)}` : 
+            null),
+        openHouseStartTime: formatTime(property.OpenHouseStartTime),
+        openHouseEndTime: formatTime(property.OpenHouseEndTime),
+        hasOpenHouse: !!(property.HasOpenHouse || (property.OpenHouseDate && property.OpenHouseStartTime)),
+        openHouseInstructions: property.ShowingInstructions || null,
       })) || [];
 
     // Response
@@ -750,6 +800,13 @@ app.get("/api/cma-comparables", async (req, res) => {
       "NewConstructionYN",
       "PostalCode",
       "StateOrProvince",
+      // Open House Scheduling Fields
+      "OpenHouseDate",
+      "OpenHouseTime", 
+      "OpenHouseStartTime",
+      "OpenHouseEndTime",
+      "HasOpenHouse",
+      "ShowingInstructions",
     ].join(",");
 
     // Build Active Properties query
@@ -895,6 +952,13 @@ app.get("/api/cma-comparables", async (req, res) => {
           prop.Media && prop.Media.length > 0
             ? prop.Media[0].MediaURL
             : "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzllYTNhOCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPk5vIFBob3RvPC90ZXh0Pjwvc3ZnPg==",
+        // Open House Scheduling Fields  
+        openHouseDate: formatDate(prop.OpenHouseDate),
+        openHouseTime: prop.OpenHouseTime || (prop.OpenHouseStartTime && prop.OpenHouseEndTime ? `${formatTime(prop.OpenHouseStartTime)} - ${formatTime(prop.OpenHouseEndTime)}` : null),
+        openHouseStartTime: formatTime(prop.OpenHouseStartTime),
+        openHouseEndTime: formatTime(prop.OpenHouseEndTime), 
+        hasOpenHouse: !!(prop.HasOpenHouse || (prop.OpenHouseDate && prop.OpenHouseStartTime)),
+        openHouseInstructions: prop.ShowingInstructions || null,
       };
     };
 
@@ -1687,6 +1751,54 @@ app.get("/api/property-reference", async (req, res) => {
   }
 });
 
+// Helper function to format time strings
+function formatTime(timeStr) {
+  if (!timeStr) return '';
+  
+  try {
+    // Handle already formatted times (with AM/PM)
+    if (timeStr.includes('AM') || timeStr.includes('PM')) {
+      return timeStr;
+    }
+    
+    // Parse HH:MM:SS or HH:MM format
+    const parts = timeStr.split(':');
+    if (parts.length < 2) return timeStr;
+    
+    let hour = parseInt(parts[0]);
+    const minutes = parts[1];
+    
+    // Convert to 12-hour format
+    const period = hour >= 12 ? 'PM' : 'AM';
+    if (hour === 0) hour = 12;
+    else if (hour > 12) hour = hour - 12;
+    
+    return `${hour}:${minutes.toString().padStart(2, '0')} ${period}`;
+  } catch (e) {
+    // Return as is if parsing fails
+    return timeStr;
+  }
+}
+
+// Helper function to format dates
+function formatDate(dateStr) {
+  if (!dateStr) return null;
+  
+  try {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    
+    // Format as YYYY-MM-DD
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    
+    return `${year}-${month}-${day}`;
+  } catch (e) {
+    return dateStr;
+  }
+}
+
 // --------------------------------------------------------------
 // NEW ADVANCED PROPERTY SEARCH (Phase 1) - /api/property-search-advanced
 // --------------------------------------------------------------
@@ -1752,6 +1864,13 @@ app.get("/api/property-search-advanced", async (req, res) => {
       "Media",
       "WaterfrontYN",
       "NewConstructionYN",
+      // Open House Scheduling Fields
+      "OpenHouseDate",
+      "OpenHouseTime",
+      "OpenHouseStartTime",
+      "OpenHouseEndTime",
+      "HasOpenHouse",
+      "ShowingInstructions",
     ].join(",");
 
     const odata = `${filterString}&$select=${selectFields}&$top=${applied.limit}`;
@@ -1830,6 +1949,13 @@ app.get("/api/property-search-advanced", async (req, res) => {
         isNewConstruction,
         latitude: r.Latitude || null,
         longitude: r.Longitude || null,
+        // --- Open House Scheduling Fields ---
+        openHouseDate: formatDate(r.OpenHouseDate),
+        openHouseTime: r.OpenHouseTime || (r.OpenHouseStartTime && r.OpenHouseEndTime ? `${formatTime(r.OpenHouseStartTime)} - ${formatTime(r.OpenHouseEndTime)}` : null),
+        openHouseStartTime: formatTime(r.OpenHouseStartTime),
+        openHouseEndTime: formatTime(r.OpenHouseEndTime),
+        hasOpenHouse: !!(r.HasOpenHouse || (r.OpenHouseDate && r.OpenHouseStartTime)),
+        openHouseInstructions: r.ShowingInstructions || null,
       };
     });
 
