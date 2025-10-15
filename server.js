@@ -103,7 +103,42 @@ let teamIdCounter = 1;
 //   created_at: "2025-09-05T..."
 // }
 
-// --- 5. Endpoints ---
+// --- 5. Helper Functions ---
+
+// Helper function to format dates
+function formatDate(dateString) {
+  if (!dateString) return null;
+  try {
+    const date = new Date(dateString);
+    return date.toISOString().split('T')[0]; // Return YYYY-MM-DD format
+  } catch (error) {
+    return null;
+  }
+}
+
+// Helper function to format times
+function formatTime(timeString) {
+  if (!timeString) return null;
+  try {
+    // Handle various time formats and convert to readable format
+    if (timeString.includes('T')) {
+      // ISO format
+      const date = new Date(timeString);
+      return date.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit',
+        hour12: true 
+      });
+    } else {
+      // Assume it's already in a readable format
+      return timeString;
+    }
+  } catch (error) {
+    return timeString; // Return original if parsing fails
+  }
+}
+
+// --- 6. Endpoints ---
 
 // Root - serve HTML page
 app.get("/", (req, res) => {
@@ -497,22 +532,35 @@ app.get("/api/property-search", async (req, res) => {
     // Transform the data to a consistent format
     const properties =
       data.value?.map((property) => ({
+        // Core identifiers
         id: property.ListingKey || Math.random().toString(36).substr(2, 9),
+        mlsNumber: property.MlsNumber || property.ListingId || "",
+        
+        // Address and location
         address: property.UnparsedAddress || "",
         city: property.City || "",
         state: property.StateOrProvince || "",
         zipCode: property.PostalCode || "",
-        listPrice: property.ListPrice || 0,
-        soldPrice: property.ClosePrice || 0,
-        sqft: property.AboveGradeFinishedArea || 0, // Above-grade only
-        basementSqft: property.BelowGradeFinishedArea || 0,
+        latitude: property.Latitude || 0,
+        longitude: property.Longitude || 0,
+        subdivision: property.SubdivisionName || "",
+        
+        // Property specifications
         beds: property.BedroomsTotal || 0,
         baths: property.BathroomsTotalInteger || 0,
-        garage: property.GarageSpaces || 0,
+        livingArea: property.AboveGradeFinishedArea || 0,
+        lotSquareFeet: property.LotSizeSquareFeet || 0,
         yearBuilt: property.YearBuilt || 0,
-        status: property.StandardStatus || "",
-        closeDate: property.CloseDate || null,
-        onMarketDate: property.OnMarketDate || null,
+        garageSpaces: property.GarageSpaces || 0,
+        hasBasement: !!(property.BelowGradeFinishedArea && property.BelowGradeFinishedArea > 0),
+        belowGradeFinishedArea: property.BelowGradeFinishedArea || 0,
+        architecturalStyle: property.ArchitecturalStyle || "",
+        propertyType: property.PropertyType || "",
+        propertySubType: property.PropertySubType || "",
+        
+        // Financial information
+        listPrice: property.ListPrice || 0,
+        closePrice: property.ClosePrice || 0,
         pricePerSqft:
           property.AboveGradeFinishedArea > 0
             ? Math.round(
@@ -520,31 +568,55 @@ app.get("/api/property-search", async (req, res) => {
                   property.AboveGradeFinishedArea
               )
             : 0,
-        propertyType: property.PropertyType || "",
-        condition: property.PropertyCondition || "",
-        style: property.ArchitecturalStyle || "",
-        subdivision: property.SubdivisionName || "",
-        latitude: property.Latitude || 0,
-        longitude: property.Longitude || 0,
-        lotSizeAcres: property.LotSizeAcres || 0,
-        lotSizeSqft: property.LotSizeSquareFeet || 0,
-        waterfront: property.WaterfrontYN || false,
-        newConstruction: property.NewConstructionYN || false,
-        isActive: property.StandardStatus === "Active",
-        imageUrl:
-          property.Media && property.Media.length > 0
+        
+        // Listing information
+        status: property.StandardStatus || "",
+        daysOnMarket: property.DaysOnMarket || 0,
+        listingContractDate: property.ListingContractDate || property.OnMarketDate || null,
+        modificationTimestamp: property.ModificationTimestamp || new Date().toISOString(),
+        
+        // Property features
+        isNewConstruction: property.NewConstructionYN || false,
+        isWaterfront: property.WaterfrontYN || false,
+        
+        // Media
+        image: property.Media && property.Media.length > 0
             ? property.Media[0].MediaURL ||
               property.Media[0].PreferredPhotoURL ||
               ""
             : "",
-        // Add time-related field (using onMarketDate or current time)
-        time: property.OnMarketDate || property.ModificationTimestamp || new Date().toISOString(),
-        // Add open house fields
+        images: property.Media ? property.Media.map(media => 
+          media.MediaURL || media.PreferredPhotoURL || ""
+        ).filter(url => url) : [],
+        
+        // Open House Information
+        OpenHouse: !!(property.HasOpenHouse || (property.OpenHouseDate && property.OpenHouseStartTime)),
         openHouseDate: formatDate(property.OpenHouseDate),
         openHouseTime: property.OpenHouseTime || 
           (property.OpenHouseStartTime && property.OpenHouseEndTime ? 
             `${formatTime(property.OpenHouseStartTime)} - ${formatTime(property.OpenHouseEndTime)}` : 
             null),
+        
+        // Legacy fields for backward compatibility
+        sqft: property.AboveGradeFinishedArea || 0, // Above-grade only
+        basementSqft: property.BelowGradeFinishedArea || 0,
+        garage: property.GarageSpaces || 0,
+        soldPrice: property.ClosePrice || 0,
+        closeDate: property.CloseDate || null,
+        onMarketDate: property.OnMarketDate || null,
+        lotSizeAcres: property.LotSizeAcres || 0,
+        lotSizeSqft: property.LotSizeSquareFeet || 0,
+        waterfront: property.WaterfrontYN || false,
+        newConstruction: property.NewConstructionYN || false,
+        isActive: property.StandardStatus === "Active",
+        imageUrl: property.Media && property.Media.length > 0
+            ? property.Media[0].MediaURL ||
+              property.Media[0].PreferredPhotoURL ||
+              ""
+            : "",
+        condition: property.PropertyCondition || "",
+        style: property.ArchitecturalStyle || "",
+        time: property.OnMarketDate || property.ModificationTimestamp || new Date().toISOString(),
         openHouseStartTime: formatTime(property.OpenHouseStartTime),
         openHouseEndTime: formatTime(property.OpenHouseEndTime),
         hasOpenHouse: !!(property.HasOpenHouse || (property.OpenHouseDate && property.OpenHouseStartTime)),
@@ -3001,32 +3073,76 @@ app.get("/api/future-properties", async (req, res) => {
           : "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzllYTNhOCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPk5vIFBob3RvPC90ZXh0Pjwvc3ZnPg==";
 
       return {
+        // Core identifiers
         id: property.ListingKey,
+        mlsNumber: property.MlsNumber || property.ListingId || "",
+        
+        // Address and location
         address: property.UnparsedAddress || "",
         city: property.City || "",
-        listPrice: property.ListPrice || 0,
-        sqft: property.LivingArea || 0,
-        basementSqft: property.BelowGradeFinishedArea || 0,
-        totalSqft:
-          (property.LivingArea || 0) + (property.BelowGradeFinishedArea || 0),
+        state: property.StateOrProvince || "",
+        zipCode: property.PostalCode || "",
+        latitude: property.Latitude || null,
+        longitude: property.Longitude || null,
+        subdivision: property.SubdivisionName || "",
+        
+        // Property specifications
         beds: property.BedroomsTotal || 0,
         baths: property.BathroomsTotalInteger || 0,
-        garage: property.GarageSpaces || 0,
+        livingArea: property.LivingArea || 0,
+        lotSquareFeet: property.LotSizeSquareFeet || 0,
         yearBuilt: property.YearBuilt || null,
-        status: property.StandardStatus || "",
-        onMarketDate: property.OnMarketDate || null,
+        garageSpaces: property.GarageSpaces || 0,
+        hasBasement: !!(property.BelowGradeFinishedArea && property.BelowGradeFinishedArea > 0),
+        belowGradeFinishedArea: property.BelowGradeFinishedArea || 0,
+        architecturalStyle: property.ArchitecturalStyle || "",
+        propertyType: property.PropertyType || "",
+        propertySubType: property.PropertySubType || "",
+        
+        // Financial information
+        listPrice: property.ListPrice || 0,
+        closePrice: property.ClosePrice || 0,
         pricePerSqft:
           property.LivingArea > 0
             ? Math.round(property.ListPrice / property.LivingArea)
             : 0,
-        propertyType: property.PropertyType || "",
+        
+        // Listing information
+        status: property.StandardStatus || "",
+        daysOnMarket: property.DaysOnMarket || 0,
+        listingContractDate: property.ListingContractDate || property.OnMarketDate || null,
+        modificationTimestamp: property.ModificationTimestamp || new Date().toISOString(),
+        
+        // Property features
+        isNewConstruction: property.NewConstructionYN || false,
+        isWaterfront: property.WaterfrontYN || false,
+        
+        // Media
+        image: imageUrl,
+        images: property.Media ? property.Media.map(media => 
+          media.MediaURL || media.PreferredPhotoURL || ""
+        ).filter(url => url) : [],
+        
+        // Open House Information
+        OpenHouse: !!(property.HasOpenHouse || (property.OpenHouseDate && property.OpenHouseStartTime)),
+        openHouseDate: formatDate(property.OpenHouseDate),
+        openHouseTime: property.OpenHouseTime || 
+          (property.OpenHouseStartTime && property.OpenHouseEndTime ? 
+            `${formatTime(property.OpenHouseStartTime)} - ${formatTime(property.OpenHouseEndTime)}` : 
+            null),
+        
+        // Legacy fields for backward compatibility
+        sqft: property.LivingArea || 0,
+        basementSqft: property.BelowGradeFinishedArea || 0,
+        totalSqft: (property.LivingArea || 0) + (property.BelowGradeFinishedArea || 0),
+        garage: property.GarageSpaces || 0,
+        onMarketDate: property.OnMarketDate || null,
         condition: property.PropertyCondition || "",
         style: property.ArchitecturalStyle || "",
-        subdivision: property.SubdivisionName || "",
-        latitude: property.Latitude || null,
-        longitude: property.Longitude || null,
         newConstruction: property.NewConstructionYN || false,
         imageUrl: imageUrl,
+        
+        // Future-specific fields
         isFuture: true,
         futureIndicators: {
           isUnderConstruction: (property.PropertyCondition || "").includes(
@@ -3398,39 +3514,76 @@ app.get("/api/team-properties", async (req, res) => {
         );
 
       return {
+        // Core identifiers
         id: property.ListingKey,
-        mlsNumber: property.ListingId,
+        mlsNumber: property.ListingId || "",
+        
+        // Address and location
         address: property.UnparsedAddress || "",
         city: property.City || "",
         state: property.StateOrProvince || "",
         zipCode: property.PostalCode || "",
-        listPrice: property.ListPrice || 0,
-        soldPrice: property.ClosePrice || 0,
-        sqft: sqftValue,
-        basementSqft: property.BelowGradeFinishedArea || 0,
-        totalSqft,
-        beds: property.BedroomsTotal || 0,
-        baths: property.BathroomsTotalInteger || 0,
-        garage: property.GarageSpaces || 0,
-        yearBuilt: property.YearBuilt || null,
-        status: property.StandardStatus || "",
-        closeDate: property.CloseDate || null,
-        onMarketDate: property.OnMarketDate || null,
-        pricePerSqft,
-        propertyType: property.PropertyType || "",
-        condition: property.PropertyCondition || "",
-        style: property.ArchitecturalStyle || "",
-        subdivision: property.SubdivisionName || "",
         latitude: property.Latitude || null,
         longitude: property.Longitude || null,
-        lotSizeAcres: property.LotSizeAcres || 0,
-        description: property.PublicRemarks || "",
-        imageUrl: primaryImage,
+        subdivision: property.SubdivisionName || "",
+        
+        // Property specifications
+        beds: property.BedroomsTotal || 0,
+        baths: property.BathroomsTotalInteger || 0,
+        livingArea: sqftValue,
+        lotSquareFeet: (property.LotSizeAcres || 0) * 43560, // Convert acres to sq ft
+        yearBuilt: property.YearBuilt || null,
+        garageSpaces: property.GarageSpaces || 0,
+        hasBasement: !!(property.BelowGradeFinishedArea && property.BelowGradeFinishedArea > 0),
+        belowGradeFinishedArea: property.BelowGradeFinishedArea || 0,
+        architecturalStyle: property.ArchitecturalStyle || "",
+        propertyType: property.PropertyType || "",
+        propertySubType: property.PropertySubType || "",
+        
+        // Financial information
+        listPrice: property.ListPrice || 0,
+        closePrice: property.ClosePrice || 0,
+        pricePerSqft,
+        
+        // Listing information
+        status: property.StandardStatus || "",
+        daysOnMarket: property.DaysOnMarket || 0,
+        listingContractDate: property.ListingContractDate || property.OnMarketDate || null,
+        modificationTimestamp: property.ModificationTimestamp || new Date().toISOString(),
+        
+        // Property features
+        isNewConstruction: property.NewConstructionYN || false,
+        isWaterfront: property.WaterfrontYN || false,
+        
+        // Media
+        image: primaryImage,
         images: property.Media
           ? property.Media.map((m) => m.MediaURL || m.PreferredPhotoURL).filter(
               Boolean
             )
           : [],
+        
+        // Open House Information
+        OpenHouse: !!(property.HasOpenHouse || (property.OpenHouseDate && property.OpenHouseStartTime)),
+        openHouseDate: formatDate(property.OpenHouseDate),
+        openHouseTime: property.OpenHouseTime || 
+          (property.OpenHouseStartTime && property.OpenHouseEndTime ? 
+            `${formatTime(property.OpenHouseStartTime)} - ${formatTime(property.OpenHouseEndTime)}` : 
+            null),
+        
+        // Legacy fields for backward compatibility
+        soldPrice: property.ClosePrice || 0,
+        sqft: sqftValue,
+        basementSqft: property.BelowGradeFinishedArea || 0,
+        totalSqft,
+        garage: property.GarageSpaces || 0,
+        closeDate: property.CloseDate || null,
+        onMarketDate: property.OnMarketDate || null,
+        condition: property.PropertyCondition || "",
+        style: property.ArchitecturalStyle || "",
+        lotSizeAcres: property.LotSizeAcres || 0,
+        description: property.PublicRemarks || "",
+        imageUrl: primaryImage,
 
         // Team/Agent info
         listAgent: {
@@ -3951,37 +4104,76 @@ app.get("/api/teams/:teamId/featured-listings", async (req, res) => {
           : null;
 
       return {
+        // Core identifiers
         id: property.ListingKey,
-        mlsNumber: property.ListingId,
+        mlsNumber: property.ListingId || "",
+        
+        // Address and location
         address: property.UnparsedAddress || "",
         city: property.City || "",
         state: property.StateOrProvince || "",
         zipCode: property.PostalCode || "",
-        listPrice: property.ListPrice || 0,
-        soldPrice: property.ClosePrice || 0,
-        sqft: sqftValue,
-        totalSqft,
-        beds: property.BedroomsTotal || 0,
-        baths: property.BathroomsTotalInteger || 0,
-        garage: property.GarageSpaces || 0,
-        yearBuilt: property.YearBuilt || null,
-        status: property.StandardStatus || "",
-        closeDate: property.CloseDate || null,
-        onMarketDate: property.OnMarketDate || null,
-        pricePerSqft,
-        propertyType: property.PropertyType || "",
-        condition: property.PropertyCondition || "",
-        style: property.ArchitecturalStyle || "",
-        subdivision: property.SubdivisionName || "",
         latitude: property.Latitude || null,
         longitude: property.Longitude || null,
-        description: property.PublicRemarks || "",
-        imageUrl: primaryImage,
+        subdivision: property.SubdivisionName || "",
+        
+        // Property specifications
+        beds: property.BedroomsTotal || 0,
+        baths: property.BathroomsTotalInteger || 0,
+        livingArea: sqftValue,
+        lotSquareFeet: (property.LotSizeAcres || 0) * 43560, // Convert acres to sq ft
+        yearBuilt: property.YearBuilt || null,
+        garageSpaces: property.GarageSpaces || 0,
+        hasBasement: !!(property.BelowGradeFinishedArea && property.BelowGradeFinishedArea > 0),
+        belowGradeFinishedArea: property.BelowGradeFinishedArea || 0,
+        architecturalStyle: property.ArchitecturalStyle || "",
+        propertyType: property.PropertyType || "",
+        propertySubType: property.PropertySubType || "",
+        
+        // Financial information
+        listPrice: property.ListPrice || 0,
+        closePrice: property.ClosePrice || 0,
+        pricePerSqft,
+        
+        // Listing information
+        status: property.StandardStatus || "",
+        daysOnMarket: property.DaysOnMarket || 0,
+        listingContractDate: property.ListingContractDate || property.OnMarketDate || null,
+        modificationTimestamp: property.ModificationTimestamp || new Date().toISOString(),
+        
+        // Property features
+        isNewConstruction: property.NewConstructionYN || false,
+        isWaterfront: property.WaterfrontYN || false,
+        
+        // Media
+        image: primaryImage,
         images: property.Media
           ? property.Media.map((m) => m.MediaURL || m.PreferredPhotoURL).filter(
               Boolean
             )
           : [],
+        
+        // Open House Information
+        OpenHouse: !!(property.HasOpenHouse || (property.OpenHouseDate && property.OpenHouseStartTime)),
+        openHouseDate: formatDate(property.OpenHouseDate),
+        openHouseTime: property.OpenHouseTime || 
+          (property.OpenHouseStartTime && property.OpenHouseEndTime ? 
+            `${formatTime(property.OpenHouseStartTime)} - ${formatTime(property.OpenHouseEndTime)}` : 
+            null),
+        
+        // Legacy fields for backward compatibility
+        soldPrice: property.ClosePrice || 0,
+        sqft: sqftValue,
+        totalSqft,
+        garage: property.GarageSpaces || 0,
+        closeDate: property.CloseDate || null,
+        onMarketDate: property.OnMarketDate || null,
+        condition: property.PropertyCondition || "",
+        style: property.ArchitecturalStyle || "",
+        description: property.PublicRemarks || "",
+        imageUrl: primaryImage,
+        
+        // Team/listing specific fields
         listAgent: {
           name: property.ListAgentFullName || "",
           mlsId: property.ListAgentMlsId || "",
