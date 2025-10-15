@@ -1551,6 +1551,16 @@ app.get("/api/property-search-new", async (req, res) => {
             : [],
 
         subdivision: prop.SubdivisionName || "",
+
+        // ✅ SCHOOL DISTRICT FIELDS RESTORED:
+        schoolElementary: prop.ElementarySchool || "",
+        schoolElementaryDistrict: prop.ElementarySchoolDistrict || "",
+        schoolMiddle: prop.MiddleOrJuniorSchool || "",
+        schoolMiddleDistrict:
+          prop.MiddleOrJuniorSchoolDistrict || prop.MiddleSchoolDistrict || "",
+        schoolHigh: prop.HighSchool || "",
+        schoolHighDistrict: prop.HighSchoolDistrict || "",
+
         latitude: prop.Latitude,
         longitude: prop.Longitude,
         distance_miles,
