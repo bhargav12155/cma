@@ -7,6 +7,16 @@ const path = require("path");
 const fetch = (...args) =>
   import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
+// District level mapping utilities
+const {
+  NEBRASKA_DISTRICT_MAPPING,
+  getDistrictsByLevel,
+  getCitiesForDistrictLevel,
+  getCommunitiesForDistrictLevel,
+  getDistrictsForCityLevel,
+  getDistrictInfo,
+} = require("./district-level-mapping");
+
 // --- 2. Init App ---
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -1198,6 +1208,13 @@ app.get("/api/property-search-new", async (req, res) => {
     property_type,
     property_condition,
 
+    // School district filters (level-aware)
+    school_district, // Can be any district name
+    elementary_district, // Specific elementary district
+    middle_district, // Specific middle/junior district
+    high_district, // Specific high school district
+    school_level, // Filter by which school level to use for district matching
+
     // Status filters
     status, // Active, Sold, Closed, etc.
 
@@ -1290,6 +1307,48 @@ app.get("/api/property-search-new", async (req, res) => {
       filters.push(
         `contains(tolower(PropertyCondition),'${property_condition.toLowerCase()}')`
       );
+
+    // School district filters (level-aware)
+    if (school_district) {
+      // Search across all school district fields if no specific level is provided
+      if (!school_level) {
+        filters.push(
+          `(ElementarySchoolDistrict eq '${school_district}' or MiddleSchoolDistrict eq '${school_district}' or MiddleOrJuniorSchoolDistrict eq '${school_district}' or HighSchoolDistrict eq '${school_district}')`
+        );
+      } else {
+        // Use level-specific filtering
+        const levelFieldMap = {
+          elementary: "ElementarySchoolDistrict",
+          middle: "MiddleSchoolDistrict,MiddleOrJuniorSchoolDistrict",
+          high: "HighSchoolDistrict",
+        };
+        const fields = levelFieldMap[school_level];
+        if (fields) {
+          const fieldArray = fields.split(",");
+          if (fieldArray.length === 1) {
+            filters.push(`${fieldArray[0]} eq '${school_district}'`);
+          } else {
+            const fieldFilters = fieldArray.map(
+              (field) => `${field} eq '${school_district}'`
+            );
+            filters.push(`(${fieldFilters.join(" or ")})`);
+          }
+        }
+      }
+    }
+
+    // Specific level district filters
+    if (elementary_district) {
+      filters.push(`ElementarySchoolDistrict eq '${elementary_district}'`);
+    }
+    if (middle_district) {
+      filters.push(
+        `(MiddleSchoolDistrict eq '${middle_district}' or MiddleOrJuniorSchoolDistrict eq '${middle_district}')`
+      );
+    }
+    if (high_district) {
+      filters.push(`HighSchoolDistrict eq '${high_district}'`);
+    }
 
     // Status filters restored - Support for active property filtering
     if (status && status !== "Any Status") {
@@ -4074,6 +4133,233 @@ app.get("/api/communities", async (req, res) => {
       success: false,
       error: err.message,
       message: "Failed to fetch communities data",
+    });
+  }
+});
+
+// ==============================================================
+// School Districts API - Level-Aware District Information
+// ==============================================================
+
+/**
+ * GET /api/districts
+ * Get school districts with level-specific filtering (elementary, middle, high)
+ * Query Params:
+ *  state=NE (default NE)
+ *  level=elementary|middle|high (required for level-specific results)
+ *  status=active|all (default active)
+ *  min_properties=3 (default 3)
+ *  max_records=2000 (default 2000)
+ *  q=search_term (optional search filter)
+ */
+app.get("/api/districts", async (req, res) => {
+  const {
+    state = "NE",
+    level = "elementary", // Default to elementary for backward compatibility
+    status = "active",
+    min_properties = 3,
+    max_records = 2000,
+    q, // optional search filter
+  } = req.query;
+
+  try {
+    console.log(
+      `[DISTRICTS] Request: state=${state}, level=${level}, min_properties=${min_properties}`
+    );
+
+    // Validate level parameter
+    const validLevels = ["elementary", "middle", "high"];
+    if (!validLevels.includes(level)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid level parameter",
+        message: `Level must be one of: ${validLevels.join(", ")}`,
+        validLevels,
+      });
+    }
+
+    // Get districts that serve the requested level
+    const relevantDistricts = getDistrictsByLevel(level);
+    console.log(
+      `[DISTRICTS] Found ${relevantDistricts.length} districts for level ${level}`
+    );
+
+    // Build district data with property counts from MLS
+    const districtsWithData = [];
+    const minProps = parseInt(min_properties);
+    const maxRecs = parseInt(max_records);
+
+    for (const districtName of relevantDistricts.slice(0, maxRecs)) {
+      const districtInfo = getDistrictInfo(districtName, level);
+      if (!districtInfo) continue;
+
+      // Get cities for this district at this level
+      const cities = getCitiesForDistrictLevel(districtName, level);
+      const communities = getCommunitiesForDistrictLevel(districtName, level);
+
+      // Count properties for this district at this level by analyzing school district fields
+      let totalProperties = 0;
+      const communitiesWithCounts = [];
+
+      try {
+        // Query MLS data to get property counts for this district
+        const levelFieldMap = {
+          elementary: "ElementarySchoolDistrict",
+          middle: "MiddleSchoolDistrict,MiddleOrJuniorSchoolDistrict",
+          high: "HighSchoolDistrict",
+        };
+
+        const fieldNames = levelFieldMap[level].split(",");
+        let searchFilter = "";
+
+        // Build search filter for this district across the appropriate fields
+        for (let i = 0; i < fieldNames.length; i++) {
+          if (i > 0) searchFilter += " OR ";
+          searchFilter += `${fieldNames[i]} eq '${districtName}'`;
+        }
+
+        const searchParams = {
+          $select: `ListingKey,City,SubdivisionName,${fieldNames.join(",")}`,
+          $filter: `ListingStatus eq 'Active' AND PropertyType eq 'Residential' AND (${searchFilter})`,
+          $top: 1000, // Reasonable limit for counting
+          $count: true,
+        };
+
+        const baseUrl = "https://api-prod.corelogic.com/trestle/odata/Property";
+        const url = new URL(baseUrl);
+        Object.entries(searchParams).forEach(([key, value]) => {
+          url.searchParams.append(key, value);
+        });
+
+        console.log(
+          `[DISTRICTS] Querying MLS for district: ${districtName} at level: ${level}`
+        );
+
+        const response = await fetch(url.toString(), {
+          headers: {
+            Authorization: `Bearer ${process.env.TRESTLE_TOKEN}`,
+            Accept: "application/json",
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          totalProperties = data["@odata.count"] || data.value?.length || 0;
+
+          // Group properties by community/subdivision
+          if (data.value && Array.isArray(data.value)) {
+            const communityCounts = {};
+
+            data.value.forEach((property) => {
+              const community =
+                property.SubdivisionName || property.City || "Unknown";
+              const city = property.City || cities[0] || "Unknown";
+
+              if (!communityCounts[community]) {
+                communityCounts[community] = {
+                  name: community,
+                  city: city,
+                  propertyCount: 0,
+                };
+              }
+              communityCounts[community].propertyCount++;
+            });
+
+            // Convert to array and add to communities list
+            Object.values(communityCounts).forEach((community) => {
+              if (community.propertyCount > 0) {
+                communitiesWithCounts.push(community);
+              }
+            });
+          }
+        } else {
+          console.warn(
+            `[DISTRICTS] Failed to fetch properties for ${districtName}: ${response.status}`
+          );
+        }
+      } catch (error) {
+        console.warn(
+          `[DISTRICTS] Error fetching properties for ${districtName}:`,
+          error.message
+        );
+      }
+
+      // Apply minimum properties filter
+      if (totalProperties >= minProps) {
+        districtsWithData.push({
+          name: districtName,
+          level: level,
+          state: state.toUpperCase(),
+          cities: cities,
+          communities:
+            communitiesWithCounts.length > 0
+              ? communitiesWithCounts
+              : communities.map((name) => ({
+                  name,
+                  city: cities[0] || "Unknown",
+                  propertyCount: 0,
+                })),
+          totalCommunities: Math.max(
+            communitiesWithCounts.length,
+            communities.length
+          ),
+          totalActiveProperties: totalProperties,
+          propertyCount: totalProperties, // Alias for compatibility
+        });
+      }
+    }
+
+    // Apply search filter if provided
+    let filteredDistricts = districtsWithData;
+    if (q && q.trim()) {
+      const searchTerm = q.toLowerCase().trim();
+      filteredDistricts = districtsWithData.filter(
+        (district) =>
+          district.name.toLowerCase().includes(searchTerm) ||
+          district.cities.some((city) =>
+            city.toLowerCase().includes(searchTerm)
+          ) ||
+          district.communities.some((community) =>
+            community.name.toLowerCase().includes(searchTerm)
+          )
+      );
+    }
+
+    // Sort by property count (descending) by default
+    filteredDistricts.sort(
+      (a, b) => b.totalActiveProperties - a.totalActiveProperties
+    );
+
+    // Apply max_records limit
+    const finalDistricts = filteredDistricts.slice(0, maxRecs);
+
+    console.log(
+      `[DISTRICTS] Returning ${finalDistricts.length} districts with level=${level}, min_properties=${minProps}`
+    );
+
+    res.json({
+      success: true,
+      count: finalDistricts.length,
+      totalCommunities: finalDistricts.reduce(
+        (sum, d) => sum + d.totalCommunities,
+        0
+      ),
+      filters: {
+        state: state.toUpperCase(),
+        level,
+        status,
+        min_properties: minProps,
+        max_records: maxRecs,
+        q: q || null,
+      },
+      districts: finalDistricts,
+    });
+  } catch (err) {
+    console.error("[DISTRICTS] Error:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+      message: "Failed to fetch districts data",
     });
   }
 });
