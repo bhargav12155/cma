@@ -41,6 +41,152 @@ app.use((req, res, next) => {
   next();
 });
 
+// --- 3B. Rate Limiting & Caching ---
+// Request queue for throttling API calls to Paragon
+const requestQueue = [];
+let isProcessing = false;
+const RATE_LIMIT_DELAY_MS = 500; // 500ms between Paragon API calls
+
+// Response cache for property searches
+const responseCache = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache
+
+// Throttle function to delay Paragon API calls
+async function throttleParagonRequest(requestFn) {
+  return new Promise((resolve, reject) => {
+    requestQueue.push({ requestFn, resolve, reject });
+    processQueue();
+  });
+}
+
+  // Batch property search endpoint
+  app.post("/api/property-search-batch", async (req, res) => {
+    // Expect: { searches: [ { ...filterParams }, ... ] }
+    const { searches } = req.body;
+    if (!Array.isArray(searches) || searches.length === 0) {
+      return res.status(400).json({ success: false, error: "Missing or invalid 'searches' array" });
+    }
+
+    // Run all searches in parallel, but each uses caching/throttling
+    try {
+      const results = await Promise.all(
+        searches.map(async (params) => {
+          // Use same cache/throttle logic as /api/property-search-new
+          const cacheKey = getCacheKey("/api/property-search-new", params);
+          const cachedResult = getCachedResponse(cacheKey);
+          if (cachedResult) {
+            return { ...cachedResult, fromCache: true, cacheTimestamp: cachedResult.cacheTimestamp };
+          }
+
+          // Build filter string
+          let filters = [];
+          if (params.zip_code) filters.push(`PostalCode eq '${params.zip_code}'`);
+          if (params.city) filters.push(`tolower(City) eq '${params.city.toLowerCase()}'`);
+          if (params.beds) {
+            if (params.beds.endsWith('+')) {
+              const minBeds = parseInt(params.beds);
+              if (!isNaN(minBeds)) filters.push(`BedroomsTotal ge ${minBeds}`);
+            } else {
+              const exactBeds = parseInt(params.beds);
+              if (!isNaN(exactBeds)) filters.push(`BedroomsTotal eq ${exactBeds}`);
+            }
+          }
+          if (params.min_beds) filters.push(`BedroomsTotal ge ${params.min_beds}`);
+          if (params.max_beds) filters.push(`BedroomsTotal le ${params.max_beds}`);
+          if (params.garage_spaces) filters.push(`GarageSpaces eq ${params.garage_spaces}`);
+          // Add more filters as needed
+
+          const filterQuery = filters.length ? `$filter=${encodeURIComponent(filters.join(' and '))}` : '';
+          const limit = params.limit || 20;
+          const offset = params.offset || 0;
+          const sort_by = params.sort_by || 'ListPrice';
+          const sort_order = params.sort_order || 'desc';
+          const url = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?access_token=${paragonApiConfig.serverToken}&$top=${limit}&$skip=${offset}&$orderby=${sort_by} ${sort_order}&${filterQuery}`;
+
+          // Throttled fetch
+          const response = await throttleParagonRequest(() => fetch(url));
+          const data = await response.json();
+
+          // Minimal result for batch (can expand as needed)
+          const result = {
+            success: true,
+            count: (data.value || []).length,
+            properties: data.value || [],
+            searchFilters: params,
+            apiUrl: url.replace(paragonApiConfig.serverToken, '***'),
+            cacheTimestamp: new Date().toISOString(),
+            cached: false
+          };
+          cacheResponse(cacheKey, result);
+          return result;
+        })
+      );
+      res.json({ success: true, results });
+    } catch (error) {
+      console.error('Error in /api/property-search-batch:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+// Process request queue with delays
+async function processQueue() {
+  if (isProcessing || requestQueue.length === 0) return;
+  
+  isProcessing = true;
+  
+  while (requestQueue.length > 0) {
+    const { requestFn, resolve, reject } = requestQueue.shift();
+    try {
+      const result = await requestFn();
+      resolve(result);
+    } catch (error) {
+      reject(error);
+    }
+    
+    // Delay between requests if more are queued
+    if (requestQueue.length > 0) {
+      await new Promise(r => setTimeout(r, RATE_LIMIT_DELAY_MS));
+    }
+  }
+  
+  isProcessing = false;
+}
+
+// Cache key generator
+function getCacheKey(endpoint, params) {
+  return `${endpoint}:${JSON.stringify(params)}`;
+}
+
+// Get cached response if available and not expired
+function getCachedResponse(cacheKey) {
+  const cached = responseCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+  // Remove expired cache
+  if (cached) {
+    responseCache.delete(cacheKey);
+  }
+  return null;
+}
+
+// Store response in cache
+function cacheResponse(cacheKey, data) {
+  responseCache.set(cacheKey, {
+    data,
+    timestamp: Date.now()
+  });
+}
+
+// Cache cleanup interval - remove expired entries every 10 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of responseCache.entries()) {
+    if (now - value.timestamp > CACHE_TTL_MS) {
+      responseCache.delete(key);
+    }
+  }
+}, 10 * 60 * 1000);
+
 // --- 4. Config ---
 // --- 4. Paragon API Configuration ---
 // Based on Paragon API documentation
@@ -1162,6 +1308,19 @@ app.get("/api/comps", async (req, res) => {
 
 // New Property Search API for testing with wildcard support
 app.get("/api/property-search-new", async (req, res) => {
+  // Check cache first
+  const cacheKey = getCacheKey("/api/property-search-new", req.query);
+  const cachedResult = getCachedResponse(cacheKey);
+  
+  if (cachedResult) {
+    console.log("✅ Returning cached response for:", cacheKey);
+    return res.json({
+      ...cachedResult,
+      fromCache: true,
+      cacheTimestamp: cachedResult.cacheTimestamp
+    });
+  }
+
   const {
     // Property IDs
     mls_number,
@@ -1388,7 +1547,8 @@ app.get("/api/property-search-new", async (req, res) => {
 
     console.log("API URL:", url);
 
-    const response = await fetch(url);
+    // Use throttled request to manage rate limiting
+    const response = await throttleParagonRequest(() => fetch(url));
     const data = await response.json();
 
     // Helper function to extract ZIP code and state from address
@@ -1631,14 +1791,21 @@ app.get("/api/property-search-new", async (req, res) => {
       };
     });
 
-    res.json({
+    const responseData = {
       success: true,
       count: processedProperties.length,
       totalAvailable: data["@odata.count"] || "unknown",
       properties: processedProperties,
       searchFilters: req.query,
       apiUrl: url.replace(paragonApiConfig.serverToken, "***"), // Hide token in response
-    });
+      cacheTimestamp: new Date().toISOString(),
+      cached: false
+    };
+    
+    // Cache the response
+    cacheResponse(cacheKey, responseData);
+    
+    res.json(responseData);
   } catch (error) {
     console.error("Error in /api/property-search-new:", error);
     res.status(500).json({ success: false, error: error.message });
