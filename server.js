@@ -19,7 +19,7 @@ const {
 
 // --- 2. Init App ---
 const app = express();
-const PORT = process.env.PORT || 3002;
+const PORT = process.env.PORT || 5000;
 
 // --- 3. Middleware ---
 app.use(cors());
@@ -143,6 +143,97 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Bedroom filter test endpoint - helps debug bedroom filter logic
+app.get("/api/test-bedroom-filter", (req, res) => {
+  const { beds, min_beds, max_beds } = req.query;
+  
+  console.log(`\n🧪 TESTING BEDROOM FILTER`);
+  console.log(`Input parameters: beds="${beds}", min_beds="${min_beds}", max_beds="${max_beds}"`);
+  
+  const filters = [];
+  const results = {
+    input: { beds, min_beds, max_beds },
+    filters_applied: [],
+    mls_query_parts: [],
+    explanations: []
+  };
+  
+  // Apply the same bedroom filter logic as in the main search
+  if (beds) {
+    const bedsStr = String(beds).trim();
+    
+    if (bedsStr.includes("+")) {
+      const bedsNumber = bedsStr.replace("+", "").trim();
+      const minBeds = parseInt(bedsNumber, 10);
+      
+      if (!isNaN(minBeds) && minBeds > 0 && minBeds <= 20) {
+        filters.push(`BedroomsTotal ge ${minBeds}`);
+        results.filters_applied.push(`${minBeds}+ bedrooms`);
+        results.mls_query_parts.push(`BedroomsTotal ge ${minBeds}`);
+        results.explanations.push(`✅ "${beds}" means find properties with ${minBeds} or more bedrooms`);
+      } else {
+        results.explanations.push(`❌ Invalid beds+ parameter: "${beds}" - must be a positive number (1-20)`);
+      }
+    } else {
+      const exactBeds = parseInt(bedsStr, 10);
+      
+      if (!isNaN(exactBeds) && exactBeds > 0 && exactBeds <= 20) {
+        filters.push(`BedroomsTotal eq ${exactBeds}`);
+        results.filters_applied.push(`exactly ${exactBeds} bedrooms`);
+        results.mls_query_parts.push(`BedroomsTotal eq ${exactBeds}`);
+        results.explanations.push(`✅ "${beds}" means find properties with exactly ${exactBeds} bedrooms`);
+      } else {
+        results.explanations.push(`❌ Invalid beds parameter: "${beds}" - must be a positive number (1-20)`);
+      }
+    }
+  }
+
+  if (min_beds) {
+    const minBedsNum = parseInt(min_beds, 10);
+    if (!isNaN(minBedsNum) && minBedsNum > 0 && minBedsNum <= 20) {
+      filters.push(`BedroomsTotal ge ${minBedsNum}`);
+      results.filters_applied.push(`${minBedsNum}+ bedrooms (min_beds)`);
+      results.mls_query_parts.push(`BedroomsTotal ge ${minBedsNum}`);
+      results.explanations.push(`✅ min_beds="${min_beds}" means ${minBedsNum} or more bedrooms`);
+    } else {
+      results.explanations.push(`❌ Invalid min_beds parameter: "${min_beds}"`);
+    }
+  }
+
+  if (max_beds) {
+    const maxBedsNum = parseInt(max_beds, 10);
+    if (!isNaN(maxBedsNum) && maxBedsNum > 0 && maxBedsNum <= 30) {
+      filters.push(`BedroomsTotal le ${maxBedsNum}`);
+      results.filters_applied.push(`${maxBedsNum} or fewer bedrooms (max_beds)`);
+      results.mls_query_parts.push(`BedroomsTotal le ${maxBedsNum}`);
+      results.explanations.push(`✅ max_beds="${max_beds}" means ${maxBedsNum} or fewer bedrooms`);
+    } else {
+      results.explanations.push(`❌ Invalid max_beds parameter: "${max_beds}"`);
+    }
+  }
+
+  results.summary = {
+    total_filters: filters.length,
+    valid_filters: filters.length,
+    combined_mls_query: filters.join(' and ')
+  };
+
+  console.log(`Filters generated:`, filters);
+  console.log(`🧪 BEDROOM FILTER TEST COMPLETE\n`);
+  
+  res.json({
+    success: true,
+    message: "Bedroom filter test completed",
+    ...results,
+    examples: {
+      "beds=3": "Find properties with exactly 3 bedrooms",
+      "beds=3+": "Find properties with 3 or more bedrooms",
+      "min_beds=2&max_beds=5": "Find properties with 2-5 bedrooms",
+      "beds=4+&max_beds=6": "Find properties with 4-6 bedrooms"
+    }
+  });
+});
+
 // Server status
 app.get("/api/status", (req, res) => {
   res.json({
@@ -196,9 +287,9 @@ app.get("/api/property-search", async (req, res) => {
     // Size filters
     min_sqft,
     max_sqft,
-    min_beds,
-    max_beds,
-    beds, // e.g., "5+" which means 5 or more
+    min_beds,    // Minimum number of bedrooms (alternative to beds=X+)
+    max_beds,    // Maximum number of bedrooms
+    beds,        // Bedroom filter: "3" = exactly 3, "3+" = 3 or more bedrooms
     min_baths,
     max_baths,
 
@@ -297,20 +388,60 @@ app.get("/api/property-search", async (req, res) => {
       filters.push(`AboveGradeFinishedArea le ${max_sqft}`);
     }
 
-    // Bedroom filters
+    // ======= BEDROOM FILTERS =======
+    // Handle the 'beds' parameter which can be:
+    // - Exact number: "3" -> exactly 3 bedrooms (BedroomsTotal eq 3)
+    // - Minimum range: "3+" -> 3 or more bedrooms (BedroomsTotal ge 3)
     if (beds) {
-      if (beds.includes("+")) {
-        const minBeds = parseInt(beds.replace("+", ""));
-        filters.push(`BedroomsTotal ge ${minBeds}`);
+      // Clean and validate the beds parameter
+      const bedsStr = String(beds).trim();
+      
+      if (bedsStr.includes("+")) {
+        // Handle "3+" format for minimum bedroom count
+        const bedsNumber = bedsStr.replace("+", "").trim();
+        const minBeds = parseInt(bedsNumber, 10);
+        
+        // Validate that we got a valid positive number
+        if (!isNaN(minBeds) && minBeds > 0 && minBeds <= 20) {
+          filters.push(`BedroomsTotal ge ${minBeds}`);
+          console.log(`✅ Bedroom filter applied: ${minBeds}+ bedrooms (BedroomsTotal >= ${minBeds})`);
+        } else {
+          console.warn(`⚠️ Invalid beds+ parameter: "${beds}" - must be a positive number (1-20)`);
+        }
       } else {
-        filters.push(`BedroomsTotal eq ${parseInt(beds)}`);
+        // Handle exact bedroom count (e.g., "3" for exactly 3 bedrooms)
+        const exactBeds = parseInt(bedsStr, 10);
+        
+        // Validate that we got a valid positive number
+        if (!isNaN(exactBeds) && exactBeds > 0 && exactBeds <= 20) {
+          filters.push(`BedroomsTotal eq ${exactBeds}`);
+          console.log(`✅ Bedroom filter applied: exactly ${exactBeds} bedrooms (BedroomsTotal = ${exactBeds})`);
+        } else {
+          console.warn(`⚠️ Invalid beds parameter: "${beds}" - must be a positive number (1-20)`);
+        }
       }
     }
+
+    // Handle separate min_beds parameter (alternative to beds=X+)
     if (min_beds) {
-      filters.push(`BedroomsTotal ge ${min_beds}`);
+      const minBedsNum = parseInt(min_beds, 10);
+      if (!isNaN(minBedsNum) && minBedsNum > 0 && minBedsNum <= 20) {
+        filters.push(`BedroomsTotal ge ${minBedsNum}`);
+        console.log(`✅ Min bedroom filter applied: ${minBedsNum}+ bedrooms (BedroomsTotal >= ${minBedsNum})`);
+      } else {
+        console.warn(`⚠️ Invalid min_beds parameter: "${min_beds}"`);
+      }
     }
+
+    // Handle separate max_beds parameter
     if (max_beds) {
-      filters.push(`BedroomsTotal le ${max_beds}`);
+      const maxBedsNum = parseInt(max_beds, 10);
+      if (!isNaN(maxBedsNum) && maxBedsNum > 0 && maxBedsNum <= 30) {
+        filters.push(`BedroomsTotal le ${maxBedsNum}`);
+        console.log(`✅ Max bedroom filter applied: ${maxBedsNum} or fewer bedrooms (BedroomsTotal <= ${maxBedsNum})`);
+      } else {
+        console.warn(`⚠️ Invalid max_beds parameter: "${max_beds}"`);
+      }
     }
 
     // Bathroom filters
@@ -1195,8 +1326,11 @@ app.get("/api/property-search-new", async (req, res) => {
     min_year_built,
     max_year_built,
     bedrooms,
+    beds,           // NEW: Support "beds" parameter with "3+" notation
     min_bedrooms,
+    min_beds,       // NEW: Alternative to min_bedrooms
     max_bedrooms,
+    max_beds,       // NEW: Alternative to max_bedrooms
     bathrooms,
     min_bathrooms,
     max_bathrooms,
@@ -1283,9 +1417,46 @@ app.get("/api/property-search-new", async (req, res) => {
     if (max_year_built) filters.push(`YearBuilt le ${max_year_built}`);
 
     // Bedroom filters
+    // Handle 'beds' parameter which supports "3" (exact) and "3+" (minimum) notation
+    if (beds) {
+      const bedsStr = String(beds).trim();
+      
+      if (bedsStr.includes("+")) {
+        // Handle "3+" format for minimum bedroom count
+        const bedsNumber = bedsStr.replace("+", "").trim();
+        const minBedsValue = parseInt(bedsNumber, 10);
+        
+        if (!isNaN(minBedsValue) && minBedsValue > 0 && minBedsValue <= 20) {
+          filters.push(`BedroomsTotal ge ${minBedsValue}`);
+          console.log(`✅ Bedroom filter applied: ${minBedsValue}+ bedrooms (BedroomsTotal >= ${minBedsValue})`);
+        } else {
+          console.warn(`⚠️ Invalid beds+ parameter: "${beds}"`);
+        }
+      } else {
+        // Handle exact bedroom count
+        const exactBedsValue = parseInt(bedsStr, 10);
+        
+        if (!isNaN(exactBedsValue) && exactBedsValue > 0 && exactBedsValue <= 20) {
+          filters.push(`BedroomsTotal eq ${exactBedsValue}`);
+          console.log(`✅ Bedroom filter applied: exactly ${exactBedsValue} bedrooms (BedroomsTotal = ${exactBedsValue})`);
+        } else {
+          console.warn(`⚠️ Invalid beds parameter: "${beds}"`);
+        }
+      }
+    }
+    
+    // Legacy bedroom parameter support
     if (bedrooms) filters.push(`BedroomsTotal eq ${bedrooms}`);
-    if (min_bedrooms) filters.push(`BedroomsTotal ge ${min_bedrooms}`);
-    if (max_bedrooms) filters.push(`BedroomsTotal le ${max_bedrooms}`);
+    if (min_bedrooms || min_beds) {
+      const minBedsValue = min_beds || min_bedrooms;
+      filters.push(`BedroomsTotal ge ${minBedsValue}`);
+      console.log(`✅ Min bedroom filter applied: ${minBedsValue}+ bedrooms`);
+    }
+    if (max_bedrooms || max_beds) {
+      const maxBedsValue = max_beds || max_bedrooms;
+      filters.push(`BedroomsTotal le ${maxBedsValue}`);
+      console.log(`✅ Max bedroom filter applied: ${maxBedsValue} or fewer bedrooms`);
+    }
 
     // Bathroom filters
     if (bathrooms) filters.push(`BathroomsTotalInteger eq ${bathrooms}`);
