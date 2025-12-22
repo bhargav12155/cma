@@ -92,6 +92,285 @@ async function getBearerToken() {
 
 const GEMINI_API_KEY = "AIzaSyACKfnIE47Ig4PZyzjygfV9VZxUKK0NPI0";
 
+// Saved searches API configuration
+const savedSearchStore = new Map(); // userKey -> saved search array
+const CMA_SAVED_SEARCHES_API_KEY =
+  process.env.CMA_SAVED_SEARCHES_API_KEY || "";
+
+function parseCookies(header) {
+  if (!header) return {};
+  return header.split(";").reduce((acc, part) => {
+    const [key, value] = part.split("=");
+    if (!key) return acc;
+    acc[key.trim()] = decodeURIComponent(value || "");
+    return acc;
+  }, {});
+}
+
+function decodeJwtPayload(token) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const normalized = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(normalized.length + (4 - (normalized.length % 4)) % 4, "=");
+    const json = Buffer.from(padded, "base64").toString("utf8");
+    return JSON.parse(json);
+  } catch (err) {
+    console.warn("[SAVED SEARCHES] Failed to decode JWT payload:", err);
+    return null;
+  }
+}
+
+function extractSavedSearchIdentity(req) {
+  // Preferred: API key via Authorization header
+  const authHeader = req.headers["authorization"];
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.slice(7).trim();
+    if (CMA_SAVED_SEARCHES_API_KEY && token === CMA_SAVED_SEARCHES_API_KEY) {
+      return {
+        userKey: "api-key",
+        meta: { source: "api-key", role: "system" },
+      };
+    }
+  }
+
+  // Fallback: cookies (authToken/publicAuthToken)
+  const cookies = parseCookies(req.headers.cookie || "");
+  const authToken = cookies.authToken || cookies.publicAuthToken;
+  if (!authToken) return null;
+  const payload = decodeJwtPayload(authToken);
+  if (!payload) return null;
+
+  const userKey = String(
+    payload.id || payload.userId || payload.email || payload.username || ""
+  ).trim();
+  if (!userKey) return null;
+
+  return {
+    userKey,
+    meta: {
+      id: payload.id || payload.userId || null,
+      email: payload.email || null,
+      username: payload.username || payload.name || null,
+      source: "cookie",
+    },
+  };
+}
+
+function ensureSavedSearchSeed(userKey) {
+  if (!userKey) return;
+  if (!savedSearchStore.has(userKey)) {
+    savedSearchStore.set(userKey, [
+      {
+        id: "seed-1",
+        title: "Omaha Active Residential",
+        searchParams: {
+          propertyType: "Residential",
+          StandardStatus: "Active",
+          city: "Omaha",
+        },
+        searchUrl:
+          "/search?propertyType=Residential&StandardStatus=Active&city=Omaha",
+        alertsEnabled: true,
+        alertFrequency: "daily",
+        updatedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+  }
+}
+
+function buildSavedSearchResponse(searches = []) {
+  return searches.map((entry) => ({
+    id: entry.id,
+    title: entry.title,
+    searchParams: entry.searchParams,
+    searchUrl: entry.searchUrl || null,
+    alertsEnabled: entry.alertsEnabled ?? false,
+    alertFrequency: entry.alertFrequency || "daily",
+    updatedAt: entry.updatedAt,
+    createdAt: entry.createdAt,
+  }));
+}
+
+function createSavedSearchEntry(payload) {
+  const now = new Date().toISOString();
+  const id = `ss_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`;
+  return {
+    id,
+    title: (payload.title || "Untitled Search").trim(),
+    searchParams: payload.searchParams || {},
+    searchUrl: payload.searchUrl || null,
+    alertsEnabled: Boolean(payload.alertsEnabled),
+    alertFrequency: payload.alertFrequency || "daily",
+    updatedAt: now,
+    createdAt: now,
+  };
+}
+
+// Optimized API proxy configuration (keeps bearer token server-side)
+const optimizedApiConfig = {
+  baseUrl: (process.env.CMA_OPTIMIZED_API_BASE || "").replace(/\/+$/, ""),
+  apiKey: process.env.CMA_OPTIMIZED_API_KEY || "",
+  userAgent:
+    process.env.CMA_OPTIMIZED_API_USER_AGENT || "NebraskaHomeHub/1.0",
+};
+
+const OPTIMIZED_DEFAULT_STATE = "NE";
+const OPTIMIZED_DEFAULT_LIMIT = 200;
+const OPTIMIZED_MAX_LIMIT = 400;
+const OPTIMIZED_DEFAULT_OFFSET = 0;
+
+function requireOptimizedConfig() {
+  if (!optimizedApiConfig.baseUrl) {
+    throw new Error(
+      "CMA_OPTIMIZED_API_BASE env var is required for optimized endpoints"
+    );
+  }
+  if (!optimizedApiConfig.apiKey) {
+    throw new Error(
+      "CMA_OPTIMIZED_API_KEY env var is required for optimized endpoints"
+    );
+  }
+}
+
+function sanitizeInteger(value, defaultValue, min, max) {
+  if (Array.isArray(value)) {
+    value = value[0];
+  }
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return defaultValue;
+  }
+  return Math.min(Math.max(parsed, min), max);
+}
+
+function normalizeOptimizedSearchQuery(rawQuery = {}) {
+  const normalized = { ...rawQuery };
+  const rawState = Array.isArray(rawQuery.state)
+    ? rawQuery.state[0]
+    : rawQuery.state;
+  normalized.state = (rawState || OPTIMIZED_DEFAULT_STATE).toUpperCase();
+
+  const rawCity = Array.isArray(rawQuery.city)
+    ? rawQuery.city[0]
+    : rawQuery.city;
+  if (rawCity) {
+    normalized.city = String(rawCity).trim().toLowerCase();
+  }
+
+  normalized.limit = sanitizeInteger(
+    rawQuery.limit,
+    OPTIMIZED_DEFAULT_LIMIT,
+    1,
+    OPTIMIZED_MAX_LIMIT
+  );
+  normalized.offset = sanitizeInteger(
+    rawQuery.offset,
+    OPTIMIZED_DEFAULT_OFFSET,
+    0,
+    5000
+  );
+
+  return normalized;
+}
+
+function appendQueryParams(url, params = {}) {
+  const appendValue = (key, value) => {
+    if (value === undefined || value === null) return;
+    url.searchParams.append(key, String(value));
+  };
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+    if (Array.isArray(value)) {
+      value.forEach((entry) => appendValue(key, entry));
+    } else {
+      appendValue(key, value);
+    }
+  });
+}
+
+function buildOptimizedUrl(pathname, queryParams = {}) {
+  requireOptimizedConfig();
+  const base = optimizedApiConfig.baseUrl;
+  const normalizedPath = pathname.startsWith("/")
+    ? pathname
+    : `/${pathname}`;
+  const url = new URL(normalizedPath, base.endsWith("/") ? base : `${base}/`);
+  appendQueryParams(url, queryParams);
+  return url.toString();
+}
+
+async function forwardOptimizedRequest(upstreamUrl, res) {
+  try {
+    const response = await fetch(upstreamUrl, {
+      headers: {
+        Authorization: `Bearer ${optimizedApiConfig.apiKey}`,
+        Accept: "application/json",
+        "User-Agent": optimizedApiConfig.userAgent,
+      },
+    });
+
+    const rawBody = await response.text();
+    let parsedBody = null;
+    if (rawBody) {
+      try {
+        parsedBody = JSON.parse(rawBody);
+      } catch (_) {
+        parsedBody = null;
+      }
+    }
+
+    if (!response.ok) {
+      const urlDetails = (() => {
+        try {
+          const parsedUrl = new URL(upstreamUrl);
+          return `${parsedUrl.pathname}${parsedUrl.search}`;
+        } catch (_) {
+          return upstreamUrl;
+        }
+      })();
+      console.error(
+        `[OPTIMIZED PROXY] Upstream ${response.status} for ${urlDetails}: ${rawBody?.slice(
+          0,
+          600
+        )}`
+      );
+      return res.status(response.status).json({
+        success: false,
+        error:
+          (parsedBody && (parsedBody.error || parsedBody.message)) ||
+          response.statusText ||
+          "Optimized API request failed",
+        upstreamStatus: response.status,
+        upstreamResponse: parsedBody || undefined,
+      });
+    }
+
+    if (!rawBody) {
+      return res.status(response.status).send();
+    }
+
+    if (parsedBody && typeof parsedBody === "object") {
+      return res.status(response.status).json(parsedBody);
+    }
+
+    res
+      .status(response.status)
+      .type(response.headers.get("content-type") || "application/json")
+      .send(rawBody);
+  } catch (error) {
+    console.error("[OPTIMIZED PROXY] Network error:", error);
+    res.status(502).json({
+      success: false,
+      error: "Failed to reach optimized API",
+      details: error.message,
+    });
+  }
+}
+
 // --- In-Memory Team Storage ---
 let teams = new Map(); // teamId -> team object
 let teamIdCounter = 1;
@@ -1645,6 +1924,59 @@ app.get("/api/property-search-new", async (req, res) => {
   }
 });
 
+function handleOptimizedProxySetupError(res, endpointLabel, error) {
+  console.error(`[OPTIMIZED PROXY] Failed to proxy ${endpointLabel}:`, error);
+  res.status(500).json({
+    success: false,
+    error: error.message || "Failed to proxy optimized endpoint",
+  });
+}
+
+app.get("/api/property-search-optim", async (req, res) => {
+  try {
+    const normalizedQuery = normalizeOptimizedSearchQuery(req.query);
+    const upstreamUrl = buildOptimizedUrl(
+      "/api/property-search-optim",
+      normalizedQuery
+    );
+    await forwardOptimizedRequest(upstreamUrl, res);
+  } catch (error) {
+    handleOptimizedProxySetupError(res, "property-search-optim", error);
+  }
+});
+
+app.get("/api/properties/:id/images-optim", async (req, res) => {
+  const { id } = req.params;
+  if (!id) {
+    return res.status(400).json({
+      success: false,
+      error: "Property ID is required",
+    });
+  }
+
+  try {
+    const upstreamUrl = buildOptimizedUrl(
+      `/api/properties/${encodeURIComponent(id)}/images-optim`,
+      req.query
+    );
+    await forwardOptimizedRequest(upstreamUrl, res);
+  } catch (error) {
+    handleOptimizedProxySetupError(res, "property-images-optim", error);
+  }
+});
+
+app.get("/api/images/optimize-optim", async (req, res) => {
+  try {
+    const upstreamUrl = buildOptimizedUrl(
+      "/api/images/optimize-optim",
+      req.query
+    );
+    await forwardOptimizedRequest(upstreamUrl, res);
+  } catch (error) {
+    handleOptimizedProxySetupError(res, "images-optimize-optim", error);
+  }
+});
+
 // Generic PropertyReference proxy - accepts OData-style params and forwards to Paragon
 app.get("/api/property-reference", async (req, res) => {
   console.log("Received property-reference request:", req.query);
@@ -2094,6 +2426,74 @@ app.post("/api/property-details-from-address", async (req, res) => {
     console.error("Error fetching property details:", err.message);
     return res.status(500).json({ error: "Failed to fetch property details" });
   }
+});
+
+// Saved searches API (in-memory demo)
+app.get("/api/saved/searches", (req, res) => {
+  const identity = extractSavedSearchIdentity(req);
+  if (!identity) {
+    return res.status(401).json({
+      success: false,
+      error: "Unauthorized",
+      message:
+        "Provide Authorization: Bearer <CMA_SAVED_SEARCHES_API_KEY> or authToken/publicAuthToken cookie.",
+    });
+  }
+
+  ensureSavedSearchSeed(identity.userKey);
+  const searches = savedSearchStore.get(identity.userKey) || [];
+  res.json({
+    success: true,
+    count: searches.length,
+    searches: buildSavedSearchResponse(searches),
+    user: identity.meta,
+  });
+});
+
+app.post("/api/saved/search", (req, res) => {
+  const identity = extractSavedSearchIdentity(req);
+  if (!identity) {
+    return res.status(401).json({
+      success: false,
+      error: "Unauthorized",
+      message:
+        "Provide Authorization: Bearer <CMA_SAVED_SEARCHES_API_KEY> or authToken/publicAuthToken cookie.",
+    });
+  }
+
+  const {
+    title,
+    searchParams,
+    searchUrl,
+    alertsEnabled = true,
+    alertFrequency = "daily",
+  } = req.body || {};
+
+  if (!title || !searchParams) {
+    return res.status(400).json({
+      success: false,
+      error: "Invalid payload",
+      message: "title and searchParams are required",
+    });
+  }
+
+  ensureSavedSearchSeed(identity.userKey);
+  const entry = createSavedSearchEntry({
+    title,
+    searchParams,
+    searchUrl,
+    alertsEnabled,
+    alertFrequency,
+  });
+  const current = savedSearchStore.get(identity.userKey) || [];
+  current.push(entry);
+  savedSearchStore.set(identity.userKey, current);
+
+  res.status(201).json({
+    success: true,
+    search: entry,
+    count: current.length,
+  });
 });
 
 // Get total property count to understand data availability

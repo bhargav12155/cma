@@ -113,7 +113,8 @@ The existing `/api/property-search-new` endpoint has been enhanced with school d
 | Parameter             | Type   | Description                                                |
 | --------------------- | ------ | ---------------------------------------------------------- |
 | `school_district`     | string | Any district name (searches all levels)                    |
-| `elementary_district` | string | Specific elementary district                               |
+| `elementary_district` | string | Specific elementary district                  -y6u7i.ik8     .l/;;pl./]
+1        |
 | `middle_district`     | string | Specific middle/junior district                            |
 | `high_district`       | string | Specific high school district                              |
 | `school_level`        | string | When used with `school_district`, limits to specific level |
