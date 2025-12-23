@@ -1896,9 +1896,13 @@ app.get("/api/property-search-new", async (req, res) => {
     bedrooms,
     min_bedrooms,
     max_bedrooms,
+    min_beds, // Alias for min_bedrooms
+    max_beds, // Alias for max_bedrooms
     bathrooms,
     min_bathrooms,
     max_bathrooms,
+    min_baths, // Alias for min_bathrooms
+    max_baths, // Alias for max_bathrooms
     garage_spaces,
 
     // Property features
@@ -1990,17 +1994,17 @@ app.get("/api/property-search-new", async (req, res) => {
     if (min_year_built) filters.push(`YearBuilt ge ${min_year_built}`);
     if (max_year_built) filters.push(`YearBuilt le ${max_year_built}`);
 
-    // Bedroom filters
+    // Bedroom filters (support both min_bedrooms and min_beds aliases)
     if (bedrooms) filters.push(`BedroomsTotal eq ${bedrooms}`);
-    if (min_bedrooms) filters.push(`BedroomsTotal ge ${min_bedrooms}`);
-    if (max_bedrooms) filters.push(`BedroomsTotal le ${max_bedrooms}`);
+    if (min_bedrooms || min_beds) filters.push(`BedroomsTotal ge ${min_bedrooms || min_beds}`);
+    if (max_bedrooms || max_beds) filters.push(`BedroomsTotal le ${max_bedrooms || max_beds}`);
 
-    // Bathroom filters
+    // Bathroom filters (support both min_bathrooms and min_baths aliases)
     if (bathrooms) filters.push(`BathroomsTotalInteger eq ${bathrooms}`);
-    if (min_bathrooms)
-      filters.push(`BathroomsTotalInteger ge ${min_bathrooms}`);
-    if (max_bathrooms)
-      filters.push(`BathroomsTotalInteger le ${max_bathrooms}`);
+    if (min_bathrooms || min_baths)
+      filters.push(`BathroomsTotalInteger ge ${min_bathrooms || min_baths}`);
+    if (max_bathrooms || max_baths)
+      filters.push(`BathroomsTotalInteger le ${max_bathrooms || max_baths}`);
 
     // Other property filters
     if (garage_spaces) filters.push(`GarageSpaces eq ${garage_spaces}`);
