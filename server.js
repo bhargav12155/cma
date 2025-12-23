@@ -2007,8 +2007,10 @@ app.get("/api/property-search-new", async (req, res) => {
 
     // Bedroom filters (support both min_bedrooms and min_beds aliases)
     if (bedrooms) filters.push(`BedroomsTotal eq ${bedrooms}`);
-    if (min_bedrooms || min_beds) filters.push(`BedroomsTotal ge ${min_bedrooms || min_beds}`);
-    if (max_bedrooms || max_beds) filters.push(`BedroomsTotal le ${max_bedrooms || max_beds}`);
+    if (min_bedrooms || min_beds)
+      filters.push(`BedroomsTotal ge ${min_bedrooms || min_beds}`);
+    if (max_bedrooms || max_beds)
+      filters.push(`BedroomsTotal le ${max_bedrooms || max_beds}`);
 
     // Bathroom filters (support both min_bathrooms and min_baths aliases)
     if (bathrooms) filters.push(`BathroomsTotalInteger eq ${bathrooms}`);
@@ -2103,15 +2105,23 @@ app.get("/api/property-search-new", async (req, res) => {
     // Stories/Number of floors filter - use ArchitecturalStyle or Levels
     if (stories) {
       const numStories = stories.toLowerCase();
-      if (numStories === "1" || numStories === "one" || numStories === "ranch") {
+      if (
+        numStories === "1" ||
+        numStories === "one" ||
+        numStories === "ranch"
+      ) {
         // Single story / Ranch
-        filters.push(`(ArchitecturalStyle/any(a: a eq 'Ranch') or ArchitecturalStyle/any(a: a eq 'Raised Ranch'))`);
+        filters.push(
+          `(ArchitecturalStyle/any(a: a eq 'Ranch') or ArchitecturalStyle/any(a: a eq 'Raised Ranch'))`
+        );
       } else if (numStories === "2" || numStories === "two") {
         // Two story
         filters.push(`Levels/any(l: l eq 'Two')`);
       } else if (numStories === "split") {
         // Split level
-        filters.push(`ArchitecturalStyle/any(a: a eq 'Split Entry' or a eq 'Split Level')`);
+        filters.push(
+          `ArchitecturalStyle/any(a: a eq 'Split Entry' or a eq 'Split Level')`
+        );
       } else if (numStories === "multi") {
         // Multi-level
         filters.push(`ArchitecturalStyle/any(a: a eq 'Multi Level')`);
@@ -2132,9 +2142,14 @@ app.get("/api/property-search-new", async (req, res) => {
 
     // View filter (comma-separated for multiple views) - View is an array
     if (view) {
-      const views = view.split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
+      const views = view
+        .split(",")
+        .map((v) => v.trim().toLowerCase())
+        .filter(Boolean);
       if (views.length > 0) {
-        const viewFilters = views.map((v) => `View/any(a: contains(tolower(a),'${v}'))`);
+        const viewFilters = views.map(
+          (v) => `View/any(a: contains(tolower(a),'${v}'))`
+        );
         filters.push(`(${viewFilters.join(" or ")})`);
       }
     }
@@ -2146,7 +2161,7 @@ app.get("/api/property-search-new", async (req, res) => {
         // Calculate the date X days ago
         const cutoffDate = new Date();
         cutoffDate.setDate(cutoffDate.getDate() - maxDays);
-        const dateStr = cutoffDate.toISOString().split('T')[0];
+        const dateStr = cutoffDate.toISOString().split("T")[0];
         filters.push(`OnMarketDate ge ${dateStr}`);
       }
     }
@@ -2242,7 +2257,7 @@ app.get("/api/property-search-new", async (req, res) => {
     const filterQuery = filters.length
       ? `$filter=${encodeURIComponent(filters.join(" and "))}`
       : "";
-    const url = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?access_token=${paragonApiConfig.serverToken}&$top=${limit}&$skip=${offset}&$orderby=${sort_by} ${sort_order}&${filterQuery}`;
+    const url = `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?access_token=${paragonApiConfig.serverToken}&$count=true&$top=${limit}&$skip=${offset}&$orderby=${sort_by} ${sort_order}&${filterQuery}`;
 
     console.log("API URL:", url);
 
@@ -2492,6 +2507,7 @@ app.get("/api/property-search-new", async (req, res) => {
     res.json({
       success: true,
       count: processedProperties.length,
+      total: data["@odata.count"] || null,
       totalAvailable: data["@odata.count"] || "unknown",
       properties: processedProperties,
       searchFilters: req.query,

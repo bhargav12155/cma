@@ -1,7 +1,7 @@
 # Property Search API - UI Filters Guide
 
-**Version:** 2.11.2  
-**Last Updated:** December 22, 2025  
+**Version:** 2.11.2
+**Last Updated:** December 22, 2025
 **Base URL:** `https://gbcma.us-east-2.elasticbeanstalk.com`
 
 ## Endpoint
@@ -15,57 +15,62 @@ GET /api/property-search-new
 ## All Available Filter Parameters
 
 ### Basic Filters
-| Parameter | Type | Example | Description |
-|-----------|------|---------|-------------|
-| `city` | string | `Omaha` | City name |
-| `StandardStatus` | string | `Active` | Property status |
-| `property_type` | string | `Residential` | Property type |
-| `limit` | number | `20` | Results per page (default: 20) |
-| `offset` | number | `0` | Pagination offset |
-| `sort_by` | string | `ListPrice` | Sort field |
-| `sort_order` | string | `asc` or `desc` | Sort direction |
+
+| Parameter        | Type   | Example         | Description                    |
+| ---------------- | ------ | --------------- | ------------------------------ |
+| `city`           | string | `Omaha`         | City name                      |
+| `StandardStatus` | string | `Active`        | Property status                |
+| `property_type`  | string | `Residential`   | Property type                  |
+| `limit`          | number | `20`            | Results per page (default: 20) |
+| `offset`         | number | `0`             | Pagination offset              |
+| `sort_by`        | string | `ListPrice`     | Sort field                     |
+| `sort_order`     | string | `asc` or `desc` | Sort direction                 |
 
 ### Price & Size Filters
-| Parameter | Type | Example | Description |
-|-----------|------|---------|-------------|
-| `min_price` | number | `200000` | Minimum list price |
-| `max_price` | number | `500000` | Maximum list price |
-| `min_sqft` | number | `1500` | Minimum square feet |
-| `max_sqft` | number | `3000` | Maximum square feet |
-| `lot_size` | string | `0.5-1` | Lot size in acres |
+
+| Parameter   | Type   | Example  | Description         |
+| ----------- | ------ | -------- | ------------------- |
+| `min_price` | number | `200000` | Minimum list price  |
+| `max_price` | number | `500000` | Maximum list price  |
+| `min_sqft`  | number | `1500`   | Minimum square feet |
+| `max_sqft`  | number | `3000`   | Maximum square feet |
+| `lot_size`  | string | `0.5-1`  | Lot size in acres   |
 
 ### Beds & Baths
-| Parameter | Type | Example | Description |
-|-----------|------|---------|-------------|
-| `min_beds` | number | `3` | Minimum bedrooms |
-| `min_baths` | number | `2` | Minimum bathrooms |
+
+| Parameter   | Type   | Example | Description       |
+| ----------- | ------ | ------- | ----------------- |
+| `min_beds`  | number | `3`     | Minimum bedrooms  |
+| `min_baths` | number | `2`     | Minimum bathrooms |
 
 ### Property Features (Zillow-Style)
-| Parameter | Type | Example | Description |
-|-----------|------|---------|-------------|
-| `has_basement` | boolean | `true` | Properties with basement |
-| `stories` | string | `1`, `2`, `ranch`, `split`, `multi` | Number of stories or style |
-| `senior_community` | boolean | `true` or `false` | 55+ senior communities |
-| `has_pool` | boolean | `true` | Properties with pool |
-| `has_fireplace` | boolean | `true` | Properties with fireplace |
-| `has_ac` | boolean | `true` | Properties with air conditioning |
-| `has_virtual_tour` | boolean | `true` | Properties with virtual tour |
-| `max_dom` | number | `30` | Max days on market |
-| `view` | string | `water,mountain` | View types (comma-separated) |
+
+| Parameter          | Type    | Example                             | Description                      |
+| ------------------ | ------- | ----------------------------------- | -------------------------------- |
+| `has_basement`     | boolean | `true`                              | Properties with basement         |
+| `stories`          | string  | `1`, `2`, `ranch`, `split`, `multi` | Number of stories or style       |
+| `senior_community` | boolean | `true` or `false`                   | 55+ senior communities           |
+| `has_pool`         | boolean | `true`                              | Properties with pool             |
+| `has_fireplace`    | boolean | `true`                              | Properties with fireplace        |
+| `has_ac`           | boolean | `true`                              | Properties with air conditioning |
+| `has_virtual_tour` | boolean | `true`                              | Properties with virtual tour     |
+| `max_dom`          | number  | `30`                                | Max days on market               |
+| `view`             | string  | `water,mountain`                    | View types (comma-separated)     |
 
 ### Additional Filters
-| Parameter | Type | Example | Description |
-|-----------|------|---------|-------------|
-| `min_year_built` | number | `2000` | Minimum year built |
-| `max_year_built` | number | `2024` | Maximum year built |
-| `garage_spaces` | number | `2` | Minimum garage spaces |
-| `min_garage` | number | `2` | Minimum garage spaces (alias) |
-| `waterfront` | boolean | `true` | Waterfront properties |
-| `new_construction` | boolean | `true` | New construction only |
-| `max_hoa` | number | `200` | Maximum HOA fee |
-| `house_style` | string | `Ranch` | House style |
-| `keywords` | string | `pool,granite` | Keywords search |
-| `photo_only` | boolean | `true` | Only with photos |
+
+| Parameter          | Type    | Example        | Description                   |
+| ------------------ | ------- | -------------- | ----------------------------- |
+| `min_year_built`   | number  | `2000`         | Minimum year built            |
+| `max_year_built`   | number  | `2024`         | Maximum year built            |
+| `garage_spaces`    | number  | `2`            | Minimum garage spaces         |
+| `min_garage`       | number  | `2`            | Minimum garage spaces (alias) |
+| `waterfront`       | boolean | `true`         | Waterfront properties         |
+| `new_construction` | boolean | `true`         | New construction only         |
+| `max_hoa`          | number  | `200`          | Maximum HOA fee               |
+| `house_style`      | string  | `Ranch`        | House style                   |
+| `keywords`         | string  | `pool,granite` | Keywords search               |
+| `photo_only`       | boolean | `true`         | Only with photos              |
 
 ---
 
@@ -74,11 +79,13 @@ GET /api/property-search-new
 ### 1. Basic Search
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -107,11 +114,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&limit=5
 ### 2. Price Range Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&min_price=300000&max_price=500000&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -136,11 +145,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&min_price=300000&m
 ### 3. Beds & Baths Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&min_beds=4&min_baths=3&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -165,11 +176,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&min_beds=4&min_bat
 ### 4. Has Basement Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&has_basement=true&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -195,18 +208,21 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&has_basement=true&
 ### 5. Stories Filter (Ranch Style)
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&stories=ranch&limit=5
 ```
 
 **Supported Values:**
+
 - `1` - Single story homes
-- `2` - Two story homes  
+- `2` - Two story homes
 - `ranch` - Ranch style homes
 - `split` - Split level homes
 - `multi` - Multi-level homes
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -232,11 +248,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&stories=ranch&limi
 ### 6. Stories Filter (2-Story)
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&stories=2&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -262,11 +280,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&stories=2&limit=5
 ### 7. Senior Community Filter (55+)
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&senior_community=true&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -292,11 +312,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&senior_community=t
 ### 8. Has Pool Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&has_pool=true&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -322,6 +344,7 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&has_pool=true&limi
 ### 9. Max Days on Market Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&max_dom=30&limit=5
 ```
@@ -329,6 +352,7 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&max_dom=30&limit=5
 **Description:** Returns properties listed within the last 30 days.
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -354,11 +378,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&max_dom=30&limit=5
 ### 10. Has Fireplace Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&has_fireplace=true&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -385,11 +411,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&has_fireplace=true
 ### 11. Has Air Conditioning Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&has_ac=true&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -415,11 +443,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&has_ac=true&limit=
 ### 12. Has Virtual Tour Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&has_virtual_tour=true&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -445,11 +475,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&has_virtual_tour=t
 ### 13. Square Footage Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&min_sqft=2000&max_sqft=3000&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -474,11 +506,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&min_sqft=2000&max_
 ### 14. Year Built Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&min_year_built=2015&max_year_built=2024&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -504,11 +538,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&min_year_built=201
 ### 15. Garage Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&min_garage=2&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -534,11 +570,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&min_garage=2&limit
 ### 16. Waterfront Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&waterfront=true&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -564,11 +602,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&waterfront=true&li
 ### 17. New Construction Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&new_construction=true&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -595,11 +635,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&new_construction=t
 ### 18. Max HOA Filter
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&max_hoa=200&limit=5
 ```
 
 **Response:**
+
 ```json
 {
   "count": 5,
@@ -625,11 +667,13 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&max_hoa=200&limit=
 ### 19. Combined Filters (Complex Search)
 
 **Request:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&min_price=300000&max_price=500000&min_beds=4&min_baths=2&has_basement=true&has_ac=true&min_garage=2&limit=10
 ```
 
 **Response:**
+
 ```json
 {
   "count": 10,
@@ -657,16 +701,19 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&min_price=300000&m
 ### 20. Sorting Results
 
 **Request (Price Low to High):**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&sort_by=ListPrice&sort_order=asc&limit=5
 ```
 
 **Request (Price High to Low):**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&sort_by=ListPrice&sort_order=desc&limit=5
 ```
 
 **Request (Newest First):**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&sort_by=OnMarketDate&sort_order=desc&limit=5
 ```
@@ -676,16 +723,19 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&sort_by=OnMarketDa
 ### 21. Pagination
 
 **First Page:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&limit=20&offset=0
 ```
 
 **Second Page:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&limit=20&offset=20
 ```
 
 **Third Page:**
+
 ```
 GET /api/property-search-new?city=Omaha&StandardStatus=Active&limit=20&offset=40
 ```
@@ -696,44 +746,45 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&limit=20&offset=40
 
 ### Zillow-Style "More Filters" Section
 
-| UI Label | API Parameter | Values |
-|----------|---------------|--------|
-| Basement | `has_basement` | `true` |
-| Pool | `has_pool` | `true` |
-| Fireplace | `has_fireplace` | `true` |
-| Air Conditioning | `has_ac` | `true` |
-| Virtual Tour | `has_virtual_tour` | `true` |
-| 55+ Community | `senior_community` | `true` |
-| Waterfront | `waterfront` | `true` |
+| UI Label         | API Parameter      | Values |
+| ---------------- | ------------------ | ------ |
+| Basement         | `has_basement`     | `true` |
+| Pool             | `has_pool`         | `true` |
+| Fireplace        | `has_fireplace`    | `true` |
+| Air Conditioning | `has_ac`           | `true` |
+| Virtual Tour     | `has_virtual_tour` | `true` |
+| 55+ Community    | `senior_community` | `true` |
+| Waterfront       | `waterfront`       | `true` |
 | New Construction | `new_construction` | `true` |
 
 ### Stories Dropdown/Select
 
-| UI Label | API Value |
-|----------|-----------|
-| Single Story | `stories=1` |
-| Two Story | `stories=2` |
-| Ranch | `stories=ranch` |
-| Split Level | `stories=split` |
-| Multi-Level | `stories=multi` |
+| UI Label     | API Value       |
+| ------------ | --------------- |
+| Single Story | `stories=1`     |
+| Two Story    | `stories=2`     |
+| Ranch        | `stories=ranch` |
+| Split Level  | `stories=split` |
+| Multi-Level  | `stories=multi` |
 
 ### Days on Market Dropdown
 
-| UI Label | API Value |
-|----------|-----------|
-| Any | (omit parameter) |
-| 1 Day | `max_dom=1` |
-| 7 Days | `max_dom=7` |
-| 14 Days | `max_dom=14` |
-| 30 Days | `max_dom=30` |
-| 60 Days | `max_dom=60` |
-| 90 Days | `max_dom=90` |
+| UI Label | API Value        |
+| -------- | ---------------- |
+| Any      | (omit parameter) |
+| 1 Day    | `max_dom=1`      |
+| 7 Days   | `max_dom=7`      |
+| 14 Days  | `max_dom=14`     |
+| 30 Days  | `max_dom=30`     |
+| 60 Days  | `max_dom=60`     |
+| 90 Days  | `max_dom=90`     |
 
 ---
 
 ## Error Responses
 
 ### Invalid Parameter
+
 ```json
 {
   "error": "Invalid parameter value",
@@ -742,6 +793,7 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&limit=20&offset=40
 ```
 
 ### No Results
+
 ```json
 {
   "count": 0,
