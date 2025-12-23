@@ -1930,6 +1930,17 @@ app.get("/api/property-search-new", async (req, res) => {
     photo_only, // Only properties with photos
     min_garage, // Minimum garage spaces
 
+    // Additional filters (Zillow-style)
+    has_basement, // true/false - has basement
+    stories, // Number of stories (1, 2, 3, etc.)
+    senior_community, // true/false - 55+ communities
+    has_pool, // true/false - has pool
+    view, // View type (Mountain, Water, City, etc.)
+    max_dom, // Maximum days on market
+    has_fireplace, // true/false - has fireplace
+    has_ac, // true/false - has air conditioning
+    has_virtual_tour, // true/false - has virtual tour
+
     // Sorting and pagination
     sort_by = "ListPrice",
     sort_order = "desc",
@@ -2081,6 +2092,78 @@ app.get("/api/property-search-new", async (req, res) => {
     // Photo only filter
     if (photo_only === "true" || photo_only === "1") {
       filters.push(`PhotosCount gt 0`);
+    }
+
+    // Additional Zillow-style filters
+    // Basement filter
+    if (has_basement === "true" || has_basement === "1") {
+      filters.push(`(BasementYN eq true or BelowGradeFinishedArea gt 0)`);
+    }
+
+    // Stories/Number of floors filter - use ArchitecturalStyle or Levels
+    if (stories) {
+      const numStories = stories.toLowerCase();
+      if (numStories === "1" || numStories === "one" || numStories === "ranch") {
+        // Single story / Ranch
+        filters.push(`(ArchitecturalStyle/any(a: a eq 'Ranch') or ArchitecturalStyle/any(a: a eq 'Raised Ranch'))`);
+      } else if (numStories === "2" || numStories === "two") {
+        // Two story
+        filters.push(`Levels/any(l: l eq 'Two')`);
+      } else if (numStories === "split") {
+        // Split level
+        filters.push(`ArchitecturalStyle/any(a: a eq 'Split Entry' or a eq 'Split Level')`);
+      } else if (numStories === "multi") {
+        // Multi-level
+        filters.push(`ArchitecturalStyle/any(a: a eq 'Multi Level')`);
+      }
+    }
+
+    // Senior/55+ community filter
+    if (senior_community === "true" || senior_community === "1") {
+      filters.push(`SeniorCommunityYN eq true`);
+    } else if (senior_community === "false" || senior_community === "0") {
+      filters.push(`(SeniorCommunityYN eq false or SeniorCommunityYN eq null)`);
+    }
+
+    // Pool filter - PoolFeatures is an array
+    if (has_pool === "true" || has_pool === "1") {
+      filters.push(`PoolFeatures/any(a: a ne null)`);
+    }
+
+    // View filter (comma-separated for multiple views) - View is an array
+    if (view) {
+      const views = view.split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
+      if (views.length > 0) {
+        const viewFilters = views.map((v) => `View/any(a: contains(tolower(a),'${v}'))`);
+        filters.push(`(${viewFilters.join(" or ")})`);
+      }
+    }
+
+    // Days on market filter - use OnMarketDate since DaysOnMarket is often null
+    if (max_dom) {
+      const maxDays = parseInt(max_dom);
+      if (!isNaN(maxDays) && maxDays >= 0) {
+        // Calculate the date X days ago
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - maxDays);
+        const dateStr = cutoffDate.toISOString().split('T')[0];
+        filters.push(`OnMarketDate ge ${dateStr}`);
+      }
+    }
+
+    // Fireplace filter
+    if (has_fireplace === "true" || has_fireplace === "1") {
+      filters.push(`(FireplaceYN eq true or FireplacesTotal gt 0)`);
+    }
+
+    // Air conditioning filter - Cooling is an array
+    if (has_ac === "true" || has_ac === "1") {
+      filters.push(`Cooling/any(c: c ne null)`);
+    }
+
+    // Virtual tour filter
+    if (has_virtual_tour === "true" || has_virtual_tour === "1") {
+      filters.push(`VirtualTourURLUnbranded ne null`);
     }
 
     // School district filters (level-aware)
