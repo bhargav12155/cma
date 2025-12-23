@@ -94,8 +94,7 @@ const GEMINI_API_KEY = "AIzaSyACKfnIE47Ig4PZyzjygfV9VZxUKK0NPI0";
 
 // Saved searches API configuration
 const savedSearchStore = new Map(); // userKey -> saved search array
-const CMA_SAVED_SEARCHES_API_KEY =
-  process.env.CMA_SAVED_SEARCHES_API_KEY || "";
+const CMA_SAVED_SEARCHES_API_KEY = process.env.CMA_SAVED_SEARCHES_API_KEY || "";
 
 function parseCookies(header) {
   if (!header) return {};
@@ -113,7 +112,10 @@ function decodeJwtPayload(token) {
   if (parts.length < 2) return null;
   try {
     const normalized = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const padded = normalized.padEnd(normalized.length + (4 - (normalized.length % 4)) % 4, "=");
+    const padded = normalized.padEnd(
+      normalized.length + ((4 - (normalized.length % 4)) % 4),
+      "="
+    );
     const json = Buffer.from(padded, "base64").toString("utf8");
     return JSON.parse(json);
   } catch (err) {
@@ -196,7 +198,9 @@ function buildSavedSearchResponse(searches = []) {
 
 function createSavedSearchEntry(payload) {
   const now = new Date().toISOString();
-  const id = `ss_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`;
+  const id = `ss_${Math.random()
+    .toString(36)
+    .slice(2, 10)}_${Date.now().toString(36)}`;
   return {
     id,
     title: (payload.title || "Untitled Search").trim(),
@@ -213,8 +217,7 @@ function createSavedSearchEntry(payload) {
 const optimizedApiConfig = {
   baseUrl: (process.env.CMA_OPTIMIZED_API_BASE || "").replace(/\/+$/, ""),
   apiKey: process.env.CMA_OPTIMIZED_API_KEY || "",
-  userAgent:
-    process.env.CMA_OPTIMIZED_API_USER_AGENT || "NebraskaHomeHub/1.0",
+  userAgent: process.env.CMA_OPTIMIZED_API_USER_AGENT || "NebraskaHomeHub/1.0",
 };
 
 const OPTIMIZED_DEFAULT_STATE = "NE";
@@ -295,9 +298,7 @@ function appendQueryParams(url, params = {}) {
 function buildOptimizedUrl(pathname, queryParams = {}) {
   requireOptimizedConfig();
   const base = optimizedApiConfig.baseUrl;
-  const normalizedPath = pathname.startsWith("/")
-    ? pathname
-    : `/${pathname}`;
+  const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
   const url = new URL(normalizedPath, base.endsWith("/") ? base : `${base}/`);
   appendQueryParams(url, queryParams);
   return url.toString();
@@ -333,10 +334,9 @@ async function forwardOptimizedRequest(upstreamUrl, res) {
         }
       })();
       console.error(
-        `[OPTIMIZED PROXY] Upstream ${response.status} for ${urlDetails}: ${rawBody?.slice(
-          0,
-          600
-        )}`
+        `[OPTIMIZED PROXY] Upstream ${
+          response.status
+        } for ${urlDetails}: ${rawBody?.slice(0, 600)}`
       );
       return res.status(response.status).json({
         success: false,
@@ -420,6 +420,426 @@ app.get("/api/health", (req, res) => {
           : "not_configured",
     },
   });
+});
+
+// Open Houses Search API
+app.get("/api/open-houses", async (req, res) => {
+  const {
+    // Location filters
+    city,
+    zip_code,
+    zipcode,
+    neighborhood,
+    subdivision,
+    county,
+    state = "NE",
+
+    // Area/coordinate filters
+    latitude,
+    longitude,
+    radius_miles = 10,
+
+    // Date filters
+    start_date, // Format: YYYY-MM-DD
+    end_date, // Format: YYYY-MM-DD
+    upcoming_only = "true", // Only show future open houses
+
+    // Property filters
+    property_type = "Residential",
+    min_price,
+    max_price,
+    min_beds,
+    max_beds,
+    min_baths,
+    max_baths,
+    min_sqft,
+    max_sqft,
+
+    // Sorting and pagination
+    sort_by = "date", // date, price, sqft
+    sort_order = "asc",
+    limit = 50,
+    offset = 0,
+  } = req.query;
+
+  try {
+    console.log("Open Houses Search Request:", req.query);
+
+    // Build filters for OpenHouses resource
+    // Note: OpenHouses resource has limited fields, mainly ListingKey and dates
+    // We'll fetch open houses and then get property details separately
+    let filters = [];
+
+    // Date filters (these work on OpenHouses directly)
+    const today = new Date().toISOString().split("T")[0];
+
+    if (upcoming_only === "true") {
+      filters.push(`OpenHouseDate ge ${today}`);
+    }
+
+    if (start_date) {
+      filters.push(`OpenHouseDate ge ${start_date}`);
+    }
+
+    if (end_date) {
+      filters.push(`OpenHouseDate le ${end_date}`);
+    }
+
+    // Note: Location and property filters will be applied after fetching property details
+
+    // Build filter string
+    const filterString =
+      filters.length > 0
+        ? `$filter=${encodeURIComponent(filters.join(" and "))}`
+        : "";
+
+    // Select fields we want from OpenHouses (basic fields only)
+    const selectFields = [
+      "OpenHouseKey",
+      "ListingKey",
+      "OpenHouseDate",
+      "OpenHouseStartTime",
+      "OpenHouseEndTime",
+      "OpenHouseRemarks",
+      "ModificationTimestamp",
+    ].join(",");
+
+    // Build sorting
+    let orderBy = `$orderby=OpenHouseDate ${sort_order},OpenHouseStartTime ${sort_order}`;
+
+    // Construct API URL to fetch OpenHouses first
+    const openHousesUrl =
+      `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/OpenHouses?` +
+      `access_token=${paragonApiConfig.serverToken}&` +
+      (filterString ? `${filterString}&` : "") +
+      `$select=${encodeURIComponent(selectFields)}&` +
+      `${orderBy}&` +
+      `$top=200`; // Fetch more to allow for property filtering
+
+    console.log("Open Houses API URL:", openHousesUrl);
+
+    // Fetch open houses first
+    const ohResponse = await fetch(openHousesUrl);
+
+    if (!ohResponse.ok) {
+      const errorText = await ohResponse.text();
+      console.error("Paragon API Error:", errorText);
+      return res.status(ohResponse.status).json({
+        success: false,
+        message: "Failed to fetch open houses from MLS",
+        error: errorText,
+      });
+    }
+
+    const ohData = await ohResponse.json();
+    const openHouses = ohData.value || [];
+
+    console.log(`Found ${openHouses.length} open houses`);
+
+    if (openHouses.length === 0) {
+      return res.json({
+        success: true,
+        count: 0,
+        openHouses: [],
+        filters: {
+          city,
+          zipCode: actualZipCode,
+          neighborhood: neighborhood || subdivision,
+          county,
+          state,
+          startDate: start_date,
+          endDate: end_date,
+          upcomingOnly: upcoming_only === "true",
+          propertyType: property_type,
+        },
+      });
+    }
+
+    // Get unique listing keys to fetch property details
+    const listingKeys = [
+      ...new Set(openHouses.map((oh) => oh.ListingKey).filter(Boolean)),
+    ];
+
+    console.log(`Fetching ${listingKeys.length} unique properties`);
+
+    // Fetch property details for all listing keys
+    const propertyFilters = listingKeys
+      .map((key) => `ListingKey eq '${key}'`)
+      .join(" or ");
+
+    const propertySelectFields = [
+      "ListingKey",
+      "UnparsedAddress",
+      "City",
+      "StateOrProvince",
+      "PostalCode",
+      "ListPrice",
+      "PropertyType",
+      "BedroomsTotal",
+      "BathroomsTotalInteger",
+      "LivingArea",
+      "SubdivisionName",
+      "CountyOrParish",
+      "Coordinates",
+      "ListAgentFirstName",
+      "ListAgentLastName",
+      "ListAgentPreferredPhone",
+      "ListAgentEmail",
+      "Media",
+    ].join(",");
+
+    const propertiesUrl =
+      `${paragonApiConfig.apiUrl}/${paragonApiConfig.datasetId}/Properties?` +
+      `access_token=${paragonApiConfig.serverToken}&` +
+      `$filter=${encodeURIComponent(propertyFilters)}&` +
+      `$select=${encodeURIComponent(propertySelectFields)}&` +
+      `$top=200`;
+
+    console.log("Fetching properties for open houses...");
+
+    const propResponse = await fetch(propertiesUrl);
+
+    if (!propResponse.ok) {
+      const errorText = await propResponse.text();
+      console.error("Failed to fetch property details:", errorText);
+      // Return open houses without property details
+      return res.json({
+        success: true,
+        count: 0,
+        total: openHouses.length,
+        openHouses: [],
+        message: "Open houses found but property details unavailable",
+        error: errorText,
+      });
+    }
+
+    const propData = await propResponse.json();
+    const properties = propData.value || [];
+
+    // Create a map of ListingKey -> Property for quick lookup
+    const propertyMap = new Map();
+    properties.forEach((prop) => {
+      propertyMap.set(prop.ListingKey, prop);
+    });
+
+    console.log(`Found ${properties.length} properties with details`);
+
+    console.log(`Found ${openHouses.length} open houses before filtering`);
+
+    // Format and combine open houses with property details
+    let formattedOpenHouses = openHouses.map((oh) => {
+      const property = propertyMap.get(oh.ListingKey) || {};
+      const media = property.Media || [];
+      const primaryImage = media.length > 0 ? media[0].MediaURL : null;
+
+      return {
+        openHouseKey: oh.OpenHouseKey,
+        listingKey: oh.ListingKey,
+
+        // Date and time
+        date: oh.OpenHouseDate,
+        startTime: oh.OpenHouseStartTime,
+        endTime: oh.OpenHouseEndTime,
+        remarks: oh.OpenHouseRemarks,
+
+        // Property details from property lookup
+        address: property.UnparsedAddress || "",
+        city: property.City || "",
+        state: property.StateOrProvince || "",
+        zipCode: property.PostalCode || "",
+        subdivision: property.SubdivisionName || "",
+        county: property.CountyOrParish || "",
+
+        // Property characteristics
+        listPrice: property.ListPrice || null,
+        propertyType: property.PropertyType || "",
+        beds: property.BedroomsTotal || null,
+        baths: property.BathroomsTotalInteger || null,
+        sqft: property.LivingArea || null,
+
+        // Image
+        imageUrl: primaryImage,
+
+        // Listing agent info from property
+        listAgent: {
+          name: `${property.ListAgentFirstName || ""} ${
+            property.ListAgentLastName || ""
+          }`.trim(),
+          phone: property.ListAgentPreferredPhone || "",
+          email: property.ListAgentEmail || "",
+        },
+
+        // Coordinates
+        coordinates: property.Coordinates || null,
+      };
+    });
+
+    // Apply property-specific filters (post-filtering after expansion)
+    const actualZipCode = zip_code || zipcode;
+
+    // Location filters
+    if (actualZipCode) {
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) => oh.zipCode === actualZipCode
+      );
+    }
+    if (city) {
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) => oh.city && oh.city.toLowerCase().includes(city.toLowerCase())
+      );
+    }
+    if (neighborhood || subdivision) {
+      const subName = (neighborhood || subdivision).toLowerCase();
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) => oh.subdivision && oh.subdivision.toLowerCase().includes(subName)
+      );
+    }
+    if (county) {
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) =>
+          oh.county && oh.county.toLowerCase().includes(county.toLowerCase())
+      );
+    }
+    if (state) {
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) => oh.state === state.toUpperCase()
+      );
+    }
+
+    // Price filters
+    if (min_price) {
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) => oh.listPrice && oh.listPrice >= parseFloat(min_price)
+      );
+    }
+    if (max_price) {
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) => oh.listPrice && oh.listPrice <= parseFloat(max_price)
+      );
+    }
+
+    // Property type filter
+    if (property_type && property_type !== "All") {
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) => oh.propertyType === property_type
+      );
+    }
+
+    // Bedroom filters
+    if (min_beds) {
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) => oh.beds && oh.beds >= parseInt(min_beds)
+      );
+    }
+    if (max_beds) {
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) => oh.beds && oh.beds <= parseInt(max_beds)
+      );
+    }
+
+    // Bathroom filters
+    if (min_baths) {
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) => oh.baths && oh.baths >= parseInt(min_baths)
+      );
+    }
+    if (max_baths) {
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) => oh.baths && oh.baths <= parseInt(max_baths)
+      );
+    }
+
+    // Square footage filters
+    if (min_sqft) {
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) => oh.sqft && oh.sqft >= parseInt(min_sqft)
+      );
+    }
+    if (max_sqft) {
+      formattedOpenHouses = formattedOpenHouses.filter(
+        (oh) => oh.sqft && oh.sqft <= parseInt(max_sqft)
+      );
+    }
+
+    // Geographic radius filter
+    if (latitude && longitude && radius_miles) {
+      const searchLat = parseFloat(latitude);
+      const searchLng = parseFloat(longitude);
+      const radiusMiles = parseFloat(radius_miles);
+
+      formattedOpenHouses = formattedOpenHouses.filter((oh) => {
+        if (!oh.coordinates || !oh.coordinates.coordinates) return false;
+        const [propLng, propLat] = oh.coordinates.coordinates;
+
+        // Simple distance calculation (Haversine formula)
+        const R = 3959; // Earth's radius in miles
+        const dLat = ((propLat - searchLat) * Math.PI) / 180;
+        const dLng = ((propLng - searchLng) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos((searchLat * Math.PI) / 180) *
+            Math.cos((propLat * Math.PI) / 180) *
+            Math.sin(dLng / 2) *
+            Math.sin(dLng / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const distance = R * c;
+
+        return distance <= radiusMiles;
+      });
+    }
+
+    // Apply sorting if needed (for price/sqft since we couldn't sort in API)
+    if (sort_by === "price") {
+      formattedOpenHouses.sort((a, b) => {
+        const priceA = a.listPrice || 0;
+        const priceB = b.listPrice || 0;
+        return sort_order === "asc" ? priceA - priceB : priceB - priceA;
+      });
+    } else if (sort_by === "sqft") {
+      formattedOpenHouses.sort((a, b) => {
+        const sqftA = a.sqft || 0;
+        const sqftB = b.sqft || 0;
+        return sort_order === "asc" ? sqftA - sqftB : sqftB - sqftA;
+      });
+    }
+
+    console.log(
+      `Returning ${formattedOpenHouses.length} open houses after filtering`
+    );
+
+    // Apply pagination after filtering
+    const startIdx = parseInt(offset) || 0;
+    const limitNum = parseInt(limit) || 50;
+    const paginatedOpenHouses = formattedOpenHouses.slice(
+      startIdx,
+      startIdx + limitNum
+    );
+
+    res.json({
+      success: true,
+      count: paginatedOpenHouses.length,
+      total: formattedOpenHouses.length,
+      openHouses: paginatedOpenHouses,
+      filters: {
+        city,
+        zipCode: actualZipCode,
+        neighborhood: neighborhood || subdivision,
+        county,
+        state,
+        startDate: start_date,
+        endDate: end_date,
+        upcomingOnly: upcoming_only === "true",
+        propertyType: property_type,
+      },
+    });
+  } catch (error) {
+    console.error("Open Houses Search Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to search open houses",
+      error: error.message,
+    });
+  }
 });
 
 // Server status
@@ -1497,6 +1917,15 @@ app.get("/api/property-search-new", async (req, res) => {
     // Status filters
     status, // Active, Sold, Closed, etc.
 
+    // Advanced filters (More Filters modal)
+    house_style, // Ranch, Multi level, 1.5 story, 2 story (comma-separated)
+    lot_style, // Flat, Daylight, Walk out (comma-separated)
+    lot_size, // Minimum lot size in square feet
+    max_hoa, // Maximum monthly HOA fee
+    keywords, // Search in remarks/description
+    photo_only, // Only properties with photos
+    min_garage, // Minimum garage spaces
+
     // Sorting and pagination
     sort_by = "ListPrice",
     sort_order = "desc",
@@ -1575,6 +2004,7 @@ app.get("/api/property-search-new", async (req, res) => {
 
     // Other property filters
     if (garage_spaces) filters.push(`GarageSpaces eq ${garage_spaces}`);
+    if (min_garage) filters.push(`GarageSpaces ge ${min_garage}`);
     if (waterfront)
       filters.push(`WaterfrontYN eq ${waterfront.toLowerCase() === "true"}`);
     if (new_construction)
@@ -1586,6 +2016,56 @@ app.get("/api/property-search-new", async (req, res) => {
       filters.push(
         `contains(tolower(PropertyCondition),'${property_condition.toLowerCase()}')`
       );
+
+    // Advanced filters (More Filters modal)
+    // House Style filter (e.g., Ranch, Multi level, 1.5 story, 2 story)
+    if (house_style) {
+      const styles = house_style.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      if (styles.length > 0) {
+        const styleFilters = styles.map(s => `contains(tolower(ArchitecturalStyle),'${s}')`);
+        filters.push(`(${styleFilters.join(' or ')})`);
+      }
+    }
+
+    // Lot Style filter (e.g., Flat, Daylight, Walk out)
+    if (lot_style) {
+      const lotStyles = lot_style.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      if (lotStyles.length > 0) {
+        const lotStyleFilters = lotStyles.map(s => `contains(tolower(LotFeatures),'${s}')`);
+        filters.push(`(${lotStyleFilters.join(' or ')})`);
+      }
+    }
+
+    // Lot Size filter (minimum square feet)
+    if (lot_size) {
+      const lotSizeSqft = parseInt(lot_size);
+      if (!isNaN(lotSizeSqft) && lotSizeSqft > 0) {
+        filters.push(`LotSizeSquareFeet ge ${lotSizeSqft}`);
+      }
+    }
+
+    // HOA Fee filter (maximum monthly fee)
+    if (max_hoa) {
+      const maxHoaFee = parseInt(max_hoa);
+      if (!isNaN(maxHoaFee) && maxHoaFee >= 0) {
+        filters.push(`AssociationFee le ${maxHoaFee}`);
+      }
+    }
+
+    // Keywords search (searches in remarks and listing ID)
+    if (keywords) {
+      const kw = keywords.trim().toLowerCase();
+      if (kw) {
+        // Escape single quotes for OData
+        const escapedKw = kw.replace(/'/g, "''");
+        filters.push(`(contains(tolower(PublicRemarks),'${escapedKw}') or contains(tolower(ListingId),'${escapedKw}'))`);
+      }
+    }
+
+    // Photo only filter
+    if (photo_only === 'true' || photo_only === '1') {
+      filters.push(`PhotosCount gt 0`);
+    }
 
     // School district filters (level-aware)
     if (school_district) {
