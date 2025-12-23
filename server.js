@@ -2020,19 +2020,29 @@ app.get("/api/property-search-new", async (req, res) => {
     // Advanced filters (More Filters modal)
     // House Style filter (e.g., Ranch, Multi level, 1.5 story, 2 story)
     if (house_style) {
-      const styles = house_style.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      const styles = house_style
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
       if (styles.length > 0) {
-        const styleFilters = styles.map(s => `contains(tolower(ArchitecturalStyle),'${s}')`);
-        filters.push(`(${styleFilters.join(' or ')})`);
+        const styleFilters = styles.map(
+          (s) => `contains(tolower(ArchitecturalStyle),'${s}')`
+        );
+        filters.push(`(${styleFilters.join(" or ")})`);
       }
     }
 
     // Lot Style filter (e.g., Flat, Daylight, Walk out)
     if (lot_style) {
-      const lotStyles = lot_style.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+      const lotStyles = lot_style
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
       if (lotStyles.length > 0) {
-        const lotStyleFilters = lotStyles.map(s => `contains(tolower(LotFeatures),'${s}')`);
-        filters.push(`(${lotStyleFilters.join(' or ')})`);
+        const lotStyleFilters = lotStyles.map(
+          (s) => `contains(tolower(LotFeatures),'${s}')`
+        );
+        filters.push(`(${lotStyleFilters.join(" or ")})`);
       }
     }
 
@@ -2058,12 +2068,14 @@ app.get("/api/property-search-new", async (req, res) => {
       if (kw) {
         // Escape single quotes for OData
         const escapedKw = kw.replace(/'/g, "''");
-        filters.push(`(contains(tolower(PublicRemarks),'${escapedKw}') or contains(tolower(ListingId),'${escapedKw}'))`);
+        filters.push(
+          `(contains(tolower(PublicRemarks),'${escapedKw}') or contains(tolower(ListingId),'${escapedKw}'))`
+        );
       }
     }
 
     // Photo only filter
-    if (photo_only === 'true' || photo_only === '1') {
+    if (photo_only === "true" || photo_only === "1") {
       filters.push(`PhotosCount gt 0`);
     }
 
