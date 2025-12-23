@@ -1,7 +1,7 @@
 # Property Search API - UI Filters Guide
 
-**Version:** 2.11.2
-**Last Updated:** December 22, 2025
+**Version:** 2.11.3  
+**Last Updated:** December 22, 2025  
 **Base URL:** `https://gbcma.us-east-2.elasticbeanstalk.com`
 
 ## Endpoint
@@ -9,6 +9,42 @@
 ```
 GET /api/property-search-new
 ```
+
+---
+
+## ⚠️ Important: Response Fields
+
+| Field | Description |
+|-------|-------------|
+| `count` | Number of properties returned in current page |
+| `total` | **Total matching properties** (use this for filter counts!) |
+| `properties` | Array of property objects |
+
+**Note:** Always use `total` field to show users how many properties match their filters.
+
+---
+
+## Filter Status (Verified December 22, 2025)
+
+### ✅ Confirmed Working Filters
+
+| Filter | API Param | Omaha Active Baseline: 1,593 | Status |
+|--------|-----------|------------------------------|--------|
+| Has Basement | `has_basement=true` | 1,056 results | ✅ Working |
+| Has Pool | `has_pool=true` | 32 results | ✅ Working |
+| Has Fireplace | `has_fireplace=true` | 697 results | ✅ Working |
+| Has AC | `has_ac=true` | 1,178 results | ✅ Working |
+| Virtual Tour | `has_virtual_tour=true` | 79 results | ✅ Working |
+| 55+ Community | `senior_community=true` | 5 results | ✅ Working |
+| Stories (Ranch) | `stories=ranch` | 443 results | ✅ Working |
+| Stories (2) | `stories=2` | 268 results | ✅ Working |
+| Days on Market | `max_dom=30` | 71 results | ✅ Working |
+
+### ❌ Not Working (MLS Data Issue)
+
+| Filter | API Param | Issue |
+|--------|-----------|-------|
+| View | `view=water` | MLS doesn't populate View field - returns 0 results |
 
 ---
 
@@ -88,8 +124,10 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&limit=5
 
 ```json
 {
+  "success": true,
   "count": 5,
-  "total": 1234,
+  "total": 1593,
+  "totalAvailable": 1593,
   "properties": [
     {
       "listingId": "22510279",
@@ -185,8 +223,9 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&has_basement=true&
 
 ```json
 {
+  "success": true,
   "count": 5,
-  "total": 892,
+  "total": 1056,
   "properties": [
     {
       "listingId": "22510282",
@@ -806,12 +845,14 @@ GET /api/property-search-new?city=Omaha&StandardStatus=Active&limit=20&offset=40
 
 ## Notes for UI Implementation
 
-1. **Boolean Filters**: Only send `true` - don't send `false` (omit the parameter)
-2. **Multiple Values**: Use comma separation for arrays (e.g., `view=water,mountain`)
-3. **Case Sensitivity**: City names are case-insensitive
-4. **Default Limit**: 20 results per page
-5. **Max Limit**: 100 results per page
-6. **Pagination**: Use `offset` for pagination, not `page`
+1. **Use `total` field for counts**: The `total` field returns accurate filtered count. Don't use `count` (that's just page size)
+2. **Boolean Filters**: Only send `true` - don't send `false` (omit the parameter)
+3. **Multiple Values**: Use comma separation for arrays (e.g., `view=water,mountain`)
+4. **Case Sensitivity**: City names are case-insensitive
+5. **Default Limit**: 20 results per page
+6. **Max Limit**: 100 results per page
+7. **Pagination**: Use `offset` for pagination, not `page`
+8. **View Filter**: Currently not working (MLS doesn't populate this field) - consider hiding from UI
 
 ---
 
